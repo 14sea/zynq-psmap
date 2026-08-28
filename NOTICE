@@ -1,0 +1,22 @@
+zynq-psmap
+Copyright 2026 14sea
+
+This product includes software developed as original content of this project,
+licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Portions of this repository are NOT original content and are NOT relicensed by
+the top-level Apache License:
+
+* data/prjxray/ — a subset of the Project X-Ray database (tilegrid.json,
+  part.yaml). Project X-Ray is released under CC0-1.0; its licence text is
+  retained verbatim at data/prjxray/LICENSE and governs that directory.
+
+* gate_runs/claimb_round1_carrier_2026_08_13_erratum006/carrier.bit — a
+  Vivado-generated bitstream, retained as an exact reproducibility artifact
+  because the pinned positive control is a measurement of this specific file.
+  It is not original content, no rights are claimed in the vendor components
+  it contains, and Vivado itself and the AMD documentation cited by this
+  repository are not redistributed here.
+
+All of the above were imported byte-for-byte from github.com/14sea/zynq-fabricmap
+at commit 5ad36a1ca26b42022121f1889172dbe4380b4539; see docs/import_manifest.md.

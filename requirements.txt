@@ -1,0 +1,3 @@
+# scripts/bitstream_frames.py parses prjxray's part.yaml, which uses custom
+# `!<xilinx/xc7series/...>` tags; a SafeLoader subclass ignores them.
+PyYAML>=6.0
