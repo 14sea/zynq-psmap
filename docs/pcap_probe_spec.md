@@ -79,6 +79,25 @@ is no blanket authorisation either. The ruling is conditional on the chain holdi
   whatsoever; the board ruling is applied for after S0 has been reviewed by a party that
   did not write it.
 
+### 2a. S0 is split, and the split is stated here rather than assumed
+
+The snapshot's S0 bundles four deliverables: discharge §2b, derive and pin §2c, **write the
+runner and its tests**, and reproduce §4. The first review of the host-only work found the
+repository calling S0 "delivered" while the runner and the single-`BoardSession`
+identity/epoch were explicitly deferred — a contradiction with the specification being
+implemented. The stage is therefore split **in this governing document**, not in a status
+line:
+
+| stage | contents | state |
+|---|---|---|
+| **S0a** | discharge §2b; derive and pin §2c; reproduce §4 | delivered, awaiting non-author review |
+| **S0b** | the runner, one `BoardSession` carrying one identity and one epoch across loader and runner (§5a step 3, §5d.1), and their tests | **not started** |
+
+**S0 is complete only when S0b exists AND §8a of `s0_derived_sequence.md` is settled.** The
+specification requires the exact sequence to be pinned; leaving two mutually exclusive DMA
+shapes for the operator to choose is a research draft and cannot serve as a board gate. No
+board ruling may be sought against S0a alone.
+
 An earlier draft of `stop_loss.md` said authorisation was "per-stage, not blanket". That
 was wrong and contradicted the snapshot's §8; it has been corrected. Both documents now say
 the same thing, and `tests/test_owner_spec.py` checks that they keep saying it.

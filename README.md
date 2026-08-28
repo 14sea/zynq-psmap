@@ -5,18 +5,35 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — M0, migration only
+## Status — S0a delivered, awaiting non-author review
 
 | | |
 |---|---|
-| stage | **M0 — migration layer complete** |
+| stage | **S0a — host-only derivation delivered, awaiting non-author review** |
+| **S0 as a whole** | **NOT complete** — see below |
 | board | **not touched, and not authorised** |
-| S0 (runner, identity/session, DMA order) | **not authorised, not started, not implemented** |
+| S0a | §2b discharged against UG585; §2c derived and pinned against UG585 **and UG470**; planner + guards; §4 target selection reproduced |
+| **S0b — runner, `BoardSession`, identity/epoch, tests** | **not started** |
+| blocking S0 | §8a: UG585 contradicts itself on the DMA command shape, and the specification requires the exact sequence to be *pinned* |
 | S1–S3 (on silicon) | **not authorised** |
-| tests | 35 (17 imported + 18 M0 guards) |
+| tests | see the command below |
 
-Nothing in this repository performs a board action. There is no runner. The imported
-specification describes stages that have not been authorised.
+Nothing in this repository performs a board action. There is no runner, and
+`tests/test_s0_pcap_plan.py` asserts by AST that the planner imports nothing that could
+open one. The imported specification describes stages that have not been authorised.
+
+**S0 is not complete and this repository does not claim it is.** The specification's S0
+includes writing the runner and the single `BoardSession` that carries one identity and one
+epoch across loader and runner; those are S0b and they are not started. The split is
+recorded in [`docs/pcap_probe_spec.md`](docs/pcap_probe_spec.md) §2a, in the governing
+document rather than in a status line.
+
+S0a's two documents are [`docs/s0_ug585_discharge.md`](docs/s0_ug585_discharge.md) — what
+UG585 actually says, and the six constraints it imposes that the specification did not
+carry — and [`docs/s0_derived_sequence.md`](docs/s0_derived_sequence.md), which pins the
+command words, the DMA registers, the completion and overflow bits, the buffers and the
+cache handling. Two questions are pinned **UNRESOLVED** rather than defaulted; the planner
+refuses to run without being told which reading to use.
 
 ## Why this is a separate repository
 
@@ -65,7 +82,8 @@ record, including what was deliberately left behind, is
 `tests/test_import_manifest.py`.
 
 ```
-python3 -m unittest discover -s tests     # 35 tests
+python3 -m unittest discover -s tests
+python3 scripts/pcap_probe_plan.py --dma-order two-unidirectional
 python3 scripts/diag_pcap_target_select.py
 ```
 

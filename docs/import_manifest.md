@@ -105,7 +105,9 @@ both directions, so a file cannot enter this repository undeclared — whatever 
 is put in.
 
 These are authored here, evolve here, and are therefore listed by path rather than by
-hash; the imported set is the one that must never move.
+hash; the imported set is the one that must never move. The last four are S0's
+deliverables and arrived after M0; the section keeps its name because the closure rule,
+not the stage label, is what it enforces.
 
 | path |
 |---|
@@ -119,6 +121,10 @@ hash; the imported set is the one that must never move.
 | `docs/stop_loss.md` |
 | `tests/test_import_manifest.py` |
 | `tests/test_owner_spec.py` |
+| `docs/s0_ug585_discharge.md` |
+| `docs/s0_derived_sequence.md` |
+| `scripts/pcap_probe_plan.py` |
+| `tests/test_s0_pcap_plan.py` |
 
 ## Deliberately NOT imported
 
