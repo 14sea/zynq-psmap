@@ -6,8 +6,9 @@ words, the DMA register fields, the completion indication, the overflow indicati
 buffer addresses and U-Boot's cache handling to be *derived and pinned before any board
 time*. Warrant classes follow [`s0_ug585_discharge.md`](s0_ug585_discharge.md).
 
-Two items are pinned as **UNRESOLVED**. They are not oversights and they must not be
-defaulted away by an implementation; see **§8**.
+**§8a is resolved** (two unidirectional DMA commands, host-only, 2026-08-28) and **§8b
+remains UNRESOLVED**. What is still open is not an oversight and must not be defaulted away
+by an implementation; see **§8**.
 
 ## 1. Register map — [UG585, discharged]
 
@@ -22,6 +23,7 @@ devcfg base `0xF8007000`.
 | `0x01C` | `DMA_DEST_ADDR` | written 2nd |
 | `0x020` | `DMA_SRC_LEN` | written 3rd |
 | `0x024` | `DMA_DEST_LEN` | written 4th — **the write that queues the command** |
+| `0x080` | `MCTRL` | read-only loopback gate (§5a-bis) |
 
 `0xF8007000` and `0xF800700C` and `0xF8007014` already appear in this board's committed
 fresh-power precheck, at `0x4E00E07F`, `0xA802000B`, `0x40000A30`.
@@ -224,6 +226,34 @@ its verification and the wait are per-command.
 carrier, and [N1] forbids a readback without it. Clearing it would destroy the precondition
 in the act of preparing to check it.
 
+### 5a-bis. `MCTRL[PCAP_LPBK]` is read, and a set bit is a STOP
+
+`MCTRL` is at **`0xF8007080`** (`XDCFG_MCTRL_OFFSET = 0x80`) and `PCAP_LPBK` is **bit 4**,
+mask **`0x10`** (`XDCFG_MCTRL_PCAP_LPBK_MASK`).
+
+With loopback enabled, PCAP data is looped from the RxFIFO back through the TxFIFO, so the
+data path is not PL frame readback. The cited sources do not establish the exact result of
+combining this probe's 43-word command transfer with its 202-word read request while
+loopback is enabled. AMD's readback path clears the bit on every call, and UG585's
+*Configure the PL* example clears it before a configuration transfer. §5e forbids
+adjusting, so this probe **reads** it and refuses to proceed:
+
+```
+md.l 0xF8007080 1               # (MCTRL & 0x10) must be 0, or STOP before any DMA
+```
+
+**The reset value being 0 does not substitute for the live read.** It is writable mode
+state — the driver writes it in both directions, *enabling* it for
+`XDCFG_CONCURRENT_NONSEC_READ_WRITE` and *clearing* it for the secure variant — so anything
+earlier in the boot may have left it set. This is the same argument as §5e's for `CTRL`: a
+historical or documented value is an expectation, not a reading.
+
+Without this gate, a loopback-enabled run would use the wrong data path. Depending on
+behavior not established by the cited sources for the unequal transfer lengths, it could
+stop as `NO_MATCH`, an error, or a timeout. None is a positive match, but the record could
+misleadingly blame the table or sequence when the true cause was a mode bit nobody looked
+at. Naming it costs one read.
+
 ### 5b. Configuration-engine cleanup, after the read
 
 Spec §5d.5's second half. A short second command stream — `NOOP`, `CMD = DESYNC`
@@ -382,41 +412,139 @@ pessimistic derivation, chosen so that it can only ever be exceeded by something
 rather than by a mis-estimated rate, and because the polling itself crosses a 115200 baud
 link. Recorded as **derived, not measured** until an S1 record carries a real elapsed time.
 
-## 8. UNRESOLVED — pinned as open, and not to be defaulted
+## 8. §8a resolved; §8b still open, and not to be defaulted
 
-### 8a. Whether a readback is one bidirectional DMA command or two — **UNRESOLVED**
+### 8a. Whether a readback is one bidirectional DMA command or two — **RESOLVED: two**
 
-UG585 contradicts itself and S0 cannot settle it from the document:
+**Resolved 2026-08-28, host-only, pending review.** The documents do **not** settle it; what
+settles it is stated below, and the losing reading is kept as a named alternative rather
+than deleted.
+
+#### The evidence, exhausted
+
+UG585 contradicts itself:
 
 - *PL Bitstream Readback*: "**Two DMA accesses are required** to complete a PL configuration
-  readback. The first access is used to issue the readback command … The second access is
-  needed to read the PL bitstream from the PCAP."
-- *Example: PL Bitstream Readback*, describing "**the first DMA access**", then programs all
-  four registers across both directions at once: "Source Address: Location of PL readback
-  command sequence. Destination Address: Desired location to store readback bitstream. Source
-  Length: Number of commands … Destination Length: Number of readback words expected from
-  the PL."
+  readback. The first access is used to issue the readback command to the PL configuration
+  module. The second access is needed to read the PL bitstream from the PCAP."
+- *Example: PL Bitstream Readback*, headed "This example shows **the first DMA access**",
+  then lists all four registers across both directions: source = the command sequence,
+  destination = "Desired location to store readback bitstream", source length = number of
+  commands, destination length = "Number of readback words expected from the PL".
 
-If the first access already carries the readback destination and its length, the second
-access has nothing left to do. The two passages cannot both be literally right.
+**The contradiction is in the source, not in the extraction.** The retrieved topic's raw
+markup is a single `<ol>` of four `<li>` items under that one heading; there is no second
+table or column that a text conversion could have flattened away. If the first access
+already carried the readback destination and its length, the second access would have
+nothing left to do.
 
-**Candidate A — two unidirectional commands**
+**No other AMD *document* adjudicates it.** UG470 is silent on the PS-side DMA — it stops at
+the SelectMAP/ICAP interface — and the documentation portal carries **no `devcfg`/`XDcfg`
+driver documentation**: the three `UG643` collections and `UG821` were searched topic by
+topic (4,107 topics) with no hit. **What does adjudicate it is not a document but AMD's
+driver source**, which is a different warrant class and is treated as one below.
+
+#### An argument for "two" that does NOT work, recorded because it looked decisive
+
+*"A single command with `src = CMD_BUF` and `dst = DST_BUF` names no PCAP endpoint at all,
+and `0xFFFFFFFF` is how a transfer says it involves the PCAP — so the bidirectional reading
+cannot express a readback."*
+
+**That argument fails.** PCAP loopback is a **mode bit**, `MCTRL[INT_PCAP_LPBK]`, which the
+*Configure the PL via PCAP Bridge Example* explicitly clears before a transfer. Because the
+mode is a bit and not an addressing convention, a DDR→DDR command with loopback disabled
+could perfectly well mean "stream the source out through the PCAP and capture what comes
+back". The `0xFFFFFFFF` marker does not carry the weight this argument put on it.
+
+#### What does settle it — AMD's own driver
+
+**Corrected 2026-08-28 after review.** An earlier version of this section argued from
+UG585's *Configure the PL via PCAP Bridge Example*: one PCAP endpoint, source and
+destination lengths both equal to the word count, and "candidate A is that shape twice".
+**That argument was wrong, and its conclusion about the lengths was wrong with it.**
+Configuration is a *write*; nothing licenses generalising its non-active-endpoint length to
+a readback. The tuples it produced refused the vendor's own and permitted tuples no vendor
+implementation issues.
+
+What settles it is the vendor's implementation of this exact operation. `XDcfg_PcapReadback()`
+in AMD's `embeddedsw`
+([`xdevcfg.c`](https://github.com/Xilinx/embeddedsw/blob/cbc5280400e7f08e35203d0dbd6bf09922049361/XilinxProcessorIPLib/drivers/devcfg/src/xdevcfg.c),
+commit `cbc5280`) issues **two** DMA commands and sets the **non-active endpoint's length to
+zero**:
+
+```c
+XDcfg_InitiateDma(InstancePtr, SourcePtr, XDCFG_DMA_INVALID_ADDRESS, SrcWordLength, 0);
+while (... & XDCFG_IXR_D_P_DONE_MASK) != XDCFG_IXR_D_P_DONE_MASK);   /* wait */
+XDcfg_InitiateDma(InstancePtr, XDCFG_DMA_INVALID_ADDRESS, DestPtr, 0, DestWordLength);
+```
+
+`XDCFG_DMA_INVALID_ADDRESS` is `0xFFFFFFFF` (`xdevcfg_hw.h`). The register-readback example
+([`xdevcfg_reg_readback_example.c`](https://github.com/Xilinx/embeddedsw/blob/cbc5280400e7f08e35203d0dbd6bf09922049361/XilinxProcessorIPLib/drivers/devcfg/examples/xdevcfg_reg_readback_example.c))
+ends with a cleanup transfer of the same shape: `(&CmdBuf[0], XDCFG_DMA_INVALID_ADDRESS,
+CmdIndex, 0)`.
+
+Three things follow, and the third is a **retraction**:
+
+1. **Two commands**, confirming the direction — and the driver waits on `D_P_DONE` between
+   them, which is independently what §5 pins.
+2. **The non-active length is 0**, so the tuples are as tabulated below.
+3. **The bidirectional reading is not adopted by the vendor's readback API** — and that is
+   the whole of what this evidence supports. **Corrected after review:** an earlier version
+   said the driver "contradicts" it. It does not. *"AMD's readback API chooses two
+   unidirectional transfers"* is not *"the hardware rejects a bidirectional tuple"*; a path
+   a driver does not implement is not a path the silicon refuses.
+
+   The same version also called `XDCFG_CONCURRENT_SECURE_READ_WRITE` and
+   `XDCFG_CONCURRENT_NONSEC_READ_WRITE` "loopback" as a pair. **That is wrong too**, and the
+   source says so plainly: the **non-secure** path *enables* `MCTRL[PCAP_LPBK]`, while the
+   **secure** path *clears* it (and sets `CTRL[PCAP_RATE_EN]`, which independently
+   corroborates §2a's reading of bit 25). They are concurrent read/write transfer types with
+   different loopback handling, and neither is the readback path.
+
+**Warrant class.** This is vendor **code**, not UG585 prose — a different class from §2a/§2b,
+and it is labelled as such wherever it is relied on. It is nonetheless the strongest evidence
+available for the vendor-supported readback transaction shape, because it is the vendor
+implementation performing the operation in question, and UG585's own text cannot adjudicate
+itself. It does not establish every transaction shape the engine might accept.
+
+**Pinned:**
 
 | | SRC_ADDR | DEST_ADDR | SRC_LEN | DEST_LEN |
 |---|---|---|---|---|
-| 1 | `0x10200001` | `0xFFFFFFFF` | 43 | 43 |
-| 2 | `0xFFFFFFFF` | `0x10300001` | 202 | 202 |
+| 1 command | `CMD_BUF\|tag` | `0xFFFFFFFF` | 43 | **0** |
+| 2 readback | `0xFFFFFFFF` | `DST_BUF\|tag` | **0** | 202 |
+| 3 cleanup | `CMD_BUF\|tag` | `0xFFFFFFFF` | 5 | **0** |
 
-**Candidate B — one bidirectional command**
+The `tag` is §8b's open question and is unchanged by this.
 
-| | SRC_ADDR | DEST_ADDR | SRC_LEN | DEST_LEN |
-|---|---|---|---|---|
-| 1 | `0x10200001` | `0x10300001` | 43 | 202 |
+#### What a wrong pin would look like — candidate diagnoses, NOT a proof of detectability
 
-`scripts/pcap_probe_plan.py` implements both and **has no default**: the ordering must be
-named explicitly or the planner refuses. Choosing one silently is the failure this project
-keeps re-encountering, and a wrong choice here is not benign — C2 says a split readback
-produces "data loss and unexpected DMA behavior", and an overflow is "unrecoverable".
+**Narrowed 2026-08-28 after review.** An earlier version said a wrong pin would *necessarily*
+show up as `DMA_CMD_ERR` or `P2D_LEN_ERR` and concluded that "neither reading can fail
+silently". **That was an overclaim and it is withdrawn.** UG585's `INT_STS` table gives each
+bit a general meaning; it does **not** establish that `src = 0xFFFFFFFF` with a wrong length
+raises `DMA_CMD_ERR`, nor that unequal lengths in one command raise `P2D_LEN_ERR`. The causal
+mapping was mine, not the document's.
+
+What can be said, and no more:
+
+| if the pin is wrong | plausible indication |
+|---|---|
+| the engine rejects the command | `INT_STS[15] DMA_CMD_ERR` — "Illegal DMA command" |
+| lengths inconsistent with what PCAP returns | `INT_STS[11] P2D_LEN_ERR` — "Inconsistent PCAP to DMA transfer length error" |
+
+Both remain **generic stops** already in the error mask, and both are recorded as **candidate
+diagnoses**. They are not exclusive, not necessary, and **no claim is made that a wrong pin
+cannot fail silently.** A wrong pin could equally produce a timeout, a `NO_MATCH`, or a
+`BLANK` — all of which are already stops, which is the actual safety property here: every
+outcome except a bit-exact match halts the probe.
+
+**The alternative is retained, not deleted**, and it is the first thing a **new run** — never
+a retry inside one (§7.4) — should vary. It may be adopted after **any** stop, not only after
+a particular error bit; tying it to one bit would smuggle the withdrawn causal claim back in
+through the procedure. Its standing is lower than when §8a was opened, because the vendor's
+readback API does not use it — which is weaker than the silicon refusing it, and is stated
+that way.
 
 ### 8b. The `2'b01` tag when one endpoint is `0xFFFF_FFFF` — **UNRESOLVED**
 
@@ -439,15 +567,22 @@ rest of the repository described this stage as finished. That was a contradictio
 specification it claims to implement, and review caught it. The stage is therefore named
 honestly:
 
+| gate | state |
+|---|---|
+| **S0a** | **PASS at `8cb544b`** |
+| **§8a** | **awaiting non-author review** |
+| **S0b** | **not started** |
+| **S0** | **NOT complete** |
+
 | | |
 |---|---|
-| **S0a — host-only derivation** | delivered here, **not yet reviewed** |
-| **S0b — runner, `BoardSession`, identity/epoch, tests** | **not started** |
-| **S0** | **NOT complete**, and cannot be until S0b exists and §8a is settled |
+| S0a scope | the host-only derivation |
+| S0b scope | the runner, one `BoardSession` carrying one identity and one epoch, and their tests |
+| why S0 is open | S0b does not exist |
 
 `docs/pcap_probe_spec.md` §2 carries the same split, so the two documents agree.
 
-**Even with S0b written, S0 does not pass while §8a is open.** The specification requires the
-exact sequence to be *pinned*; two mutually exclusive DMA shapes with the choice left to the
-operator is a research draft, not a gate. Resolving §8a is a precondition for S0, not a
-footnote to it.
+**§8a was that precondition and it is now resolved** — the sequence is pinned rather than
+left to the operator, and the losing reading is retained only as a named alternative for a
+new run. The resolution is itself **unreviewed**. What remains between here and S0 is
+**S0b**.

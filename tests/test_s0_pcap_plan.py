@@ -7,11 +7,14 @@ direction, because a pinned constant that lives in only one of the two is not pi
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+
+from markdown_it import MarkdownIt
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -195,10 +198,107 @@ class TheProbeWritesNoConfiguration(unittest.TestCase):
 
 class UnresolvedThingsStayUnresolved(unittest.TestCase):
 
-    def test_dma_order_has_no_default(self):
-        """A silent default is how an open question becomes an invisible assumption."""
-        with self.assertRaises(SystemExit):
-            P.main(["--far", "0x00000b99"])
+    def test_the_pinned_dma_order_is_the_default_now_that_8a_is_resolved(self):
+        """While §8a was open there was deliberately no default.  It is resolved, so the
+        default is the pinned reading -- and the pin must be the unidirectional one."""
+        self.assertEqual(P.PINNED_DMA_ORDER, "two-unidirectional")
+        self.assertEqual(P.ALTERNATIVE_DMA_ORDER, "one-bidirectional")
+        plan = P.build_plan(0x00000B99, P.PINNED_DMA_ORDER, 0xA5A5A5A5)
+        self.assertEqual(plan["pinned_dma_order"], "two-unidirectional")
+        self.assertEqual(P.EXPECTED_TRANSACTIONS[P.PINNED_DMA_ORDER],
+                         ["command", "readback", "cleanup"])
+
+    def test_8a_is_no_longer_listed_as_unresolved(self):
+        plan = P.build_plan(0x00000B99, P.PINNED_DMA_ORDER, 0xA5A5A5A5)
+        self.assertNotIn("8a", " ".join(plan["unresolved"]))
+        self.assertRegex(" ".join(plan["unresolved"]), r"8b")
+
+    def test_the_candidate_diagnoses_are_not_named_as_a_causal_mapping(self):
+        """The plan may list generic error stops; it may not claim they reveal a wrong pin.
+
+        The earlier fields were `discriminating_stop.pinned_reading_wrong` and
+        `*_ALTERNATIVE_WRONG` -- names that assert exactly the causal mapping UG585's
+        INT_STS table does not establish.
+        """
+        plan = P.build_plan(0x00000B99, P.PINNED_DMA_ORDER, 0xA5A5A5A5)
+        self.assertNotIn("discriminating_stop", plan)
+        self.assertIn("candidate_diagnoses", plan)
+        self.assertRegex(plan["candidate_diagnoses_note"],
+                         r"not exclusive, not necessary")
+        self.assertRegex(plan["candidate_diagnoses_note"],
+                         r"cannot fail silently")
+        for name in ("DMA_CMD_ERR", "P2D_LEN_ERR"):
+            with self.subTest(bit=name):
+                self.assertIn(name, plan["candidate_diagnoses"])
+                self.assertTrue(P.INT_STS_ERROR_MASK & P.CANDIDATE_DIAGNOSIS_BITS[name],
+                                "a candidate diagnosis must already be a stop")
+        self.assertEqual(P.CANDIDATE_DIAGNOSIS_BITS,
+                         {"DMA_CMD_ERR": 1 << 15, "P2D_LEN_ERR": 1 << 11})
+
+    BANNED_NAMES = ("PINNED_WRONG", "ALTERNATIVE_WRONG", "discriminating_stop",
+                    "pinned_reading_wrong", "alternative_wrong")
+
+    def test_no_symbol_or_field_names_a_wrong_pin(self):
+        """Identifiers and dict keys, via the AST.
+
+        A substring scan fails on the comment that records the withdrawn names as
+        history -- the same class of error as the guard that tripped on "S0 is NOT
+        complete". What must not come back is a *name*, not a mention.
+        """
+        tree = ast.parse((REPO_ROOT / "scripts/pcap_probe_plan.py").read_text())
+        used = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Name):
+                used.add(n.id)
+            elif isinstance(n, ast.Attribute):
+                used.add(n.attr)
+            elif isinstance(n, ast.Constant) and isinstance(n.value, str):
+                used.add(n.value)
+        for banned in self.BANNED_NAMES:
+            with self.subTest(name=banned):
+                self.assertFalse(
+                    any(banned in u for u in used),
+                    f"{banned} is used as an identifier or key again")
+
+    def test_the_withdrawn_names_are_still_recorded_as_withdrawn(self):
+        """The comment that a substring scan tripped on is load-bearing: keep it."""
+        src = (REPO_ROOT / "scripts/pcap_probe_plan.py").read_text()
+        self.assertIn("PINNED_WRONG", src, "the retraction comment must stay")
+        # the comment wraps, so the continuation "#" sits between the words
+        self.assertRegex(src, r"establishes no such causal[\s#]+mapping")
+
+    def test_the_alternative_is_not_tied_to_one_error_bit(self):
+        """Flattened, including Python string continuations.
+
+        The first version used a bounded gap between "alternative" and "after a
+        DMA_CMD_ERR"; in the source those words are separated by a quote, a newline and
+        25 spaces of indentation, so the mutation that re-tied the alternative to one bit
+        survived.
+        """
+        # "not only after" was in this list and sits in the legitimate sentence itself,
+        # so it excused the very mutation the guard exists to catch. Retraction markers
+        # must be words that only a retraction would use.
+        history = ("was tied", "An earlier", "earlier version", "withdrawn causal",
+                   "no longer gated")
+        for name, path in (("s0_derived_sequence.md",
+                            REPO_ROOT / "docs/s0_derived_sequence.md"),
+                           ("pcap_probe_plan.py",
+                            REPO_ROOT / "scripts/pcap_probe_plan.py"),
+                           ("pcap_probe_spec.md",
+                            REPO_ROOT / "docs/pcap_probe_spec.md"),
+                           ("README.md", REPO_ROOT / "README.md")):
+            flat = " ".join(path.read_text().replace('"', " ").replace("*", "").split())
+            for m in re.finditer(r"after (?:a|an) \w*_?ERR", flat):
+                window = flat[max(0, m.start() - 100):m.end() + 60]
+                with self.subTest(doc=name, at=m.group(0)):
+                    self.assertTrue(
+                        any(h in window for h in history),
+                        f"{name} gates the alternative on one bit: ...{window}...")
+
+    def test_the_alternative_is_retained_and_still_fully_checked(self):
+        plan = P.build_plan(0x00000B99, P.ALTERNATIVE_DMA_ORDER, 0xA5A5A5A5)
+        P.check_allowlist(plan)
+        P.check_value_policy(plan)
 
     def test_both_readings_are_implemented(self):
         two = P.dma_commands("two-unidirectional", 43, 202)
@@ -210,16 +310,88 @@ class UnresolvedThingsStayUnresolved(unittest.TestCase):
         self.assertEqual(one[0]["DMA_SRC_LEN"], 43)
         self.assertEqual(one[0]["DMA_DEST_LEN"], 202)
 
-    def test_the_plan_reports_its_unresolved_items(self):
+    def test_the_plan_reports_its_remaining_unresolved_items(self):
+        """§8a is resolved; §8b is not, and the plan must keep saying so."""
         plan = P.build_plan(0x00000B99, "two-unidirectional", 0xA5A5A5A5)
         self.assertTrue(plan["unresolved"])
-        self.assertRegex(" ".join(plan["unresolved"]), r"8a")
         self.assertRegex(" ".join(plan["unresolved"]), r"8b")
+        self.assertNotRegex(" ".join(plan["unresolved"]), r"8a")
 
-    def test_the_document_marks_both_as_unresolved(self):
+    def test_the_document_records_8a_as_resolved_and_8b_as_open(self):
         flat = " ".join(SEQ_DOC.replace("*", "").split())
-        self.assertRegex(flat, r"8a\..{0,120}UNRESOLVED")
+        self.assertRegex(flat, r"8a\..{0,120}RESOLVED: two")
         self.assertRegex(flat, r"8b\..{0,140}UNRESOLVED")
+
+    def test_the_resolution_keeps_the_losing_reading_and_its_failed_argument(self):
+        """Both are load-bearing: an alternative that is deleted cannot be tried, and a
+        failed argument that is deleted gets reinvented."""
+        start = SEQ_DOC.index("### 8a.")
+        section = " ".join(SEQ_DOC[start:SEQ_DOC.index("### 8b.")].split())
+        self.assertRegex(section, r"does NOT work",
+                         "the argument that looked decisive and failed must stay")
+        self.assertRegex(section, r"INT_PCAP_LPBK",
+                         "the reason it fails must stay with it")
+        self.assertRegex(section, r"retained, not deleted")
+        self.assertRegex(section, r"never a retry inside one")
+        self.assertRegex(section, r"is not adopted by the vendor's readback API",
+                         "the driver shows non-adoption, not hardware refusal")
+        self.assertNotRegex(
+            section, r"bidirectional reading is now contradicted",
+            "a path a driver does not implement is not a path the silicon refuses")
+        self.assertRegex(section, r"non-secure.{0,40}enables|enables `MCTRL",
+                         "the concurrent transfer types differ in loopback handling")
+        self.assertRegex(section, r"DMA_CMD_ERR")
+        self.assertRegex(section, r"P2D_LEN_ERR")
+
+    def test_the_discrimination_claim_stays_narrow(self):
+        """V5/V6: the overclaim must not come back.
+
+        The earlier wording said a wrong pin would necessarily raise DMA_CMD_ERR or
+        P2D_LEN_ERR and therefore "neither reading can fail silently". UG585's INT_STS
+        table does not establish that causal mapping.
+        """
+        section = " ".join(SEQ_DOC[SEQ_DOC.index("### 8a."):
+                                   SEQ_DOC.index("### 8b.")].split())
+        self.assertIn("candidate diagnoses", section)
+        self.assertRegex(section, r"not exclusive, not necessary")
+        for overclaim in (r"neither reading can fail silently",
+                          r"cannot fail silently"):
+            for m in re.finditer(overclaim, section):
+                window = section[max(0, m.start() - 80):m.end() + 20]
+                with self.subTest(claim=overclaim):
+                    self.assertRegex(
+                        window, r"no claim is made|withdrawn|earlier version|That was",
+                        f"the exclusivity overclaim is asserted again: ...{window}...")
+
+    def test_the_correction_record_stays_with_the_conclusion(self):
+        """V13: deleting 'this is what I had wrong' leaves a conclusion with no history."""
+        section = " ".join(SEQ_DOC[SEQ_DOC.index("### 8a."):
+                                   SEQ_DOC.index("### 8b.")].split())
+        self.assertRegex(section, r"Corrected 2026-08-28 after review")
+        self.assertRegex(section, r"That argument was wrong")
+        self.assertRegex(section, r"Narrowed 2026-08-28 after review")
+
+    def test_the_8b_heading_does_not_claim_resolution(self):
+        """V10: 'UNRESOLVED' appearing later in the line is not enough."""
+        heading = re.search(r"^### 8b\..*$", SEQ_DOC, re.M)
+        self.assertIsNotNone(heading)
+        # (?<!UN) matters: a bare "RESOLVED" also matches inside "UNRESOLVED".
+        self.assertNotRegex(heading.group(0), r"(?<!UN)RESOLVED(?!\w)|[Ss]ettled")
+        self.assertRegex(heading.group(0), r"\*\*UNRESOLVED\*\*$")
+
+    def test_the_8a_heading_claims_exactly_the_pinned_reading(self):
+        heading = re.search(r"^### 8a\..*$", SEQ_DOC, re.M)
+        self.assertIsNotNone(heading)
+        self.assertRegex(heading.group(0), r"RESOLVED: two")
+
+    def test_the_documents_are_recorded_as_exhausted(self):
+        section = " ".join(
+            SEQ_DOC[SEQ_DOC.index("### 8a."):SEQ_DOC.index("### 8b.")].split())
+        self.assertRegex(section, r"UG470 is silent")
+        self.assertRegex(section, r"no .{0,12}devcfg.{0,40}driver documentation|"
+                                  r"no `devcfg`/`XDcfg` driver")
+        self.assertRegex(section, r"raw markup is a single `<ol>`|"
+                                  r"contradiction is in the source")
 
     def test_u1_is_recorded_as_retracted_not_quietly_deleted(self):
         flat = " ".join(DISCHARGE_DOC.replace("*", "").split())
@@ -510,23 +682,27 @@ class ScopeIsStatedHonestly(unittest.TestCase):
     README = (REPO_ROOT / "README.md").read_text()
 
     def test_no_document_claims_s0_is_complete(self):
+        """Any completion word near "S0" must be negated, conditional, or reported speech.
+
+        Two earlier versions of this guard were wrong in opposite directions: one matched
+        only "S0 is complete" and so missed "S0 is now complete"; the widened one then
+        fired on "S0 is NOT complete", because the negation sits inside the match rather
+        than before it. The window therefore spans the match.
+        """
+        allowed = ("not", "NOT", "only when", "cannot", "calling", "described", "awaits")
+        pattern = re.compile(
+            r"\bS0\b(?![ab])(?:\W+\w+){0,3}?\W+"
+            r"(?:complete|completed|delivered|passed)\b")
         for name, text in (("s0_derived_sequence.md", self.SEQ),
                            ("pcap_probe_spec.md", self.OWNER),
                            ("README.md", self.README)):
-            with self.subTest(doc=name):
-                # Pipes are stripped too: a status row "| S0 | delivered |" is an
-                # affirmative claim, and leaving the pipes in let it slip past.
-                flat = " ".join(text.replace("*", "").replace("|", " ").split())
-                # An affirmative claim only: "S0 is complete only when ..." and
-                # "S0 is NOT complete" are the statements this repo must be making.
-                for m in re.finditer(r"S0 (?:is |as a whole )?(?:complete|delivered|"
-                                     r"passed)\b", flat):
-                    tail = flat[m.end():m.end() + 30]
-                    head = flat[max(0, m.start() - 30):m.start()]
+            flat = " ".join(text.replace("*", "").replace("|", " ").split())
+            for m in pattern.finditer(flat):
+                window = flat[max(0, m.start() - 60):m.end() + 40]
+                with self.subTest(doc=name, at=m.group(0)):
                     self.assertTrue(
-                        tail.lstrip().startswith("only when") or "NOT" in head
-                        or "not" in head,
-                        f"{name} asserts S0 completion: ...{flat[m.start()-40:m.end()+40]}...")
+                        any(a in window for a in allowed),
+                        f"{name} asserts S0 completion: ...{window}...")
 
     def test_the_split_is_in_the_governing_document(self):
         flat = " ".join(self.OWNER.replace("*", "").split())
@@ -595,13 +771,46 @@ class TransactionsAndStreamsAreAdjudicatedWhole(unittest.TestCase):
         self.assertIn("not a permitted DMA transaction", self._reject(plan))
 
     def test_only_the_four_tuples_are_legal(self):
+        """The non-active endpoint's length is 0, as AMD's XDcfg_PcapReadback() issues."""
         self.assertEqual(len(P.LEGAL_DMA_TRANSACTIONS), 4)
         self.assertEqual(
             P.LEGAL_DMA_TRANSACTIONS,
-            {"command":       (P.CMD_BUF | 1, 0xFFFFFFFF, 43, 43),
-             "readback":      (0xFFFFFFFF, P.DST_BUF | 1, 202, 202),
-             "bidirectional": (P.CMD_BUF | 1, P.DST_BUF | 1, 43, 202),
-             "cleanup":       (P.CMD_BUF | 1, 0xFFFFFFFF, 5, 5)})
+            {"command":       (P.CMD_BUF | 1, 0xFFFFFFFF, 43, 0),
+             "readback":      (0xFFFFFFFF, P.DST_BUF | 1, 0, 202),
+             "cleanup":       (P.CMD_BUF | 1, 0xFFFFFFFF, 5, 0),
+             "bidirectional": (P.CMD_BUF | 1, P.DST_BUF | 1, 43, 202)})
+
+    def test_the_mirrored_lengths_are_refused(self):
+        """The shape this repo pinned before review, now a negative case.
+
+        Mirroring the active length onto the PCAP side was generalised from UG585's
+        *configuration* example -- a write -- and the vendor's readback does not do it.
+        """
+        for name, tx in (("command 43/43", (P.CMD_BUF | 1, 0xFFFFFFFF, 43, 43)),
+                         ("readback 202/202", (0xFFFFFFFF, P.DST_BUF | 1, 202, 202)),
+                         ("cleanup 5/5", (P.CMD_BUF | 1, 0xFFFFFFFF, 5, 5))):
+            with self.subTest(case=name):
+                self.assertNotIn(tx, set(P.LEGAL_DMA_TRANSACTIONS.values()))
+
+    def test_a_plan_with_mirrored_lengths_is_rejected_end_to_end(self):
+        plan = self._plan("two-unidirectional")
+        for step in plan["uboot_script"]:
+            if step["cmd"] == f"mw.l {P.REG['DMA_DEST_LEN']:#010x} 0x00000000 1":
+                step["cmd"] = f"mw.l {P.REG['DMA_DEST_LEN']:#010x} 0x0000002b 1"
+                break
+        else:
+            self.fail("no zero-length DEST_LEN write to mutate")
+        self.assertIn("not a permitted DMA transaction", self._reject(plan))
+
+    def test_the_pcap_side_length_is_zero_in_every_issued_tuple(self):
+        for order in ("two-unidirectional", "one-bidirectional"):
+            for tx in P.dma_transactions(self._plan(order)):
+                src, dst, src_len, dst_len = tx
+                with self.subTest(order=order, tx=tx):
+                    if src == 0xFFFFFFFF:
+                        self.assertEqual(src_len, 0, "PCAP source length must be 0")
+                    if dst == 0xFFFFFFFF:
+                        self.assertEqual(dst_len, 0, "PCAP destination length must be 0")
 
     def test_the_plans_only_issue_those_tuples(self):
         legal = set(P.LEGAL_DMA_TRANSACTIONS.values())
@@ -792,7 +1001,8 @@ class TheWholeScheduleIsValidated(unittest.TestCase):
                 step["cmd"] = "mw.l 0xf8007024 5 1"
             elif c.startswith("mw.l 0xf800701c"):
                 step["cmd"] = "mw.l 0xf800701c 0xffffffff 1"
-        self.assertIn("transaction sequence", self._reject(plan))
+        self.assertRegex(self._reject(plan),
+                         r"transaction sequence|not a permitted DMA transaction")
 
     def test_an_extra_legal_cleanup_is_refused(self):
         plan = self._plan()
@@ -1021,6 +1231,497 @@ class TheMeasuredOrderIsNotSaidToAgree(unittest.TestCase):
             flat, r"FAR . RCFG[^.]{0,80}agrees with UG470",
             "the measured order diverges from UG470; §3c adjudicates it")
         self.assertRegex(flat, r"diverges from. UG470|diverges from UG470")
+
+
+
+class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
+    """The class of defect that slipped through: five statements said §8a was open and
+    that the planner had no default, while the resolution said otherwise, and every test
+    passed. A status claim made in one file must not be contradicted in another."""
+
+    FILES = {
+        "README.md": REPO_ROOT / "README.md",
+        "pcap_probe_spec.md": REPO_ROOT / "docs/pcap_probe_spec.md",
+        "s0_derived_sequence.md": REPO_ROOT / "docs/s0_derived_sequence.md",
+        "pcap_probe_plan.py": REPO_ROOT / "scripts/pcap_probe_plan.py",
+    }
+    # A stale claim is one that says the thing is open/undecided WITHOUT marking itself as
+    # history. Retractions are allowed and are how this repository records its mistakes.
+    HISTORY = ("was open", "was right then", "An earlier", "earlier version", "was wrong",
+               "had been", "before review", "previously", "no longer")
+
+    def _stale(self, text: str, pattern: str) -> list[str]:
+        flat = " ".join(text.replace("*", "").replace("|", " ").split())
+        out = []
+        for m in re.finditer(pattern, flat):
+            window = flat[max(0, m.start() - 90):m.end() + 90]
+            if not any(h in window for h in self.HISTORY):
+                out.append(window)
+        return out
+
+    def test_nothing_still_says_the_dma_order_has_no_default(self):
+        for name, path in self.FILES.items():
+            with self.subTest(doc=name):
+                stale = self._stale(path.read_text(),
+                                    r"no default|refuses to run without|"
+                                    r"deliberately no default")
+                self.assertEqual(stale, [], f"{name}: {stale}")
+
+    def test_nothing_still_says_8a_is_open(self):
+        for name, path in self.FILES.items():
+            with self.subTest(doc=name):
+                stale = self._stale(
+                    path.read_text(),
+                    r"8a[^.]{0,60}(?:UNRESOLVED|is open|unresolved)|"
+                    r"[Tt]wo (?:items|questions) [^.]{0,30}UNRESOLVED")
+                self.assertEqual(stale, [], f"{name}: {stale}")
+
+    def test_the_planner_and_the_documents_agree_on_the_default(self):
+        """Not prose: the argparse default itself."""
+        tree = ast.parse((REPO_ROOT / "scripts/pcap_probe_plan.py").read_text())
+        defaults = [
+            kw.value for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and any(isinstance(a, ast.Constant) and a.value == "--dma-order"
+                    for a in call.args)
+            for kw in call.keywords if kw.arg == "default"
+        ]
+        self.assertEqual(len(defaults), 1, "--dma-order must declare exactly one default")
+        self.assertIsInstance(defaults[0], ast.Name)
+        self.assertEqual(defaults[0].id, "PINNED_DMA_ORDER")
+
+    def test_8b_is_still_recorded_as_open_everywhere_it_is_mentioned(self):
+        seq = (REPO_ROOT / "docs/s0_derived_sequence.md").read_text()
+        self.assertRegex(seq, r"### 8b\..{0,140}UNRESOLVED")
+        plan = P.build_plan(0x00000B99, P.PINNED_DMA_ORDER, 0xA5A5A5A5)
+        self.assertRegex(" ".join(plan["unresolved"]), r"8b")
+
+    def test_the_vendor_driver_citation_is_immutable(self):
+        seq = (REPO_ROOT / "docs/s0_derived_sequence.md").read_text()
+        self.assertIn("cbc5280400e7f08e35203d0dbd6bf09922049361", seq,
+                      "the driver must be cited at a pinned commit, not at master")
+        self.assertNotRegex(seq, r"embeddedsw/blob/master",
+                            "a master URL is not a citation")
+
+
+# --- the gate-status table: one canonical table, compared for equality ---------------
+#
+# Two earlier versions were fail-open and review broke both by ADDING contradictions
+# rather than removing facts.  The first accepted a contrary row as long as some other row
+# was right.  The second matched the expected wording and then enumerated known antonyms
+# -- so "reviewed", "pending non-author review" and "active" walked straight through,
+# because an antonym list is a guess about natural language and there is always another
+# word.
+#
+# There is no list any more.  The status table is a CLOSED artefact: four rows, two
+# columns, fixed keys, fixed values, fixed order, identical in all three documents.  It is
+# parsed and compared for equality.  Anything added, removed, reordered, re-worded or
+# appended to a cell is a difference, without the guard having to know what it means.
+
+CANONICAL_STATUS_TABLE = (
+    ("gate", "state"),
+    ("S0a", "PASS at 8cb544b"),
+    ("§8a", "awaiting non-author review"),
+    ("S0b", "not started"),
+    ("S0", "NOT complete"),
+)
+STATUS_KEYS = tuple(k for k, _ in CANONICAL_STATUS_TABLE[1:])
+
+
+def _norm(cell: str) -> str:
+    return " ".join(cell.replace("**", " ").replace("`", " ").split())
+
+
+# The table is located with a real GFM parser, not by scanning for lines starting with a
+# pipe.  Review broke the hand-rolled scanner twice over, both times without touching the
+# canonical rows:
+#   * `S0a | awaiting non-author review` omits the outer pipes, which GFM permits, so it
+#     renders as a fourth body row -- and the scanner, which required a leading "|",
+#     ended the block there and never saw it;
+#   * wrapping the whole table in a fenced code block makes it render as code and not as a
+#     table at all, while the scanner still counted its lines as one.
+# Markdown block context is not something to re-derive from first principles, so it is not
+# re-derived here.  A blockquoted table is likewise not a top-level table and does not
+# count -- which makes a fenced or quoted canonical table a *missing* table, fail-closed.
+_MD = MarkdownIt("commonmark").enable("table")   # commonmark + GFM tables, no linkify
+
+
+def top_level_tables(text: str) -> list[list[list[str]]]:
+    """Every table at document top level, as rows of normalised cells."""
+    tables: list[tuple[int, list[list[str]]]] = []
+    current: list[list[str]] | None = None
+    depth = 0
+    for tok in _MD.parse(text):
+        if tok.type in ("blockquote_open", "bullet_list_open", "ordered_list_open"):
+            depth += 1
+        elif tok.type in ("blockquote_close", "bullet_list_close",
+                          "ordered_list_close"):
+            depth -= 1
+        elif tok.type == "table_open":
+            current = []
+            tables.append((depth, current))
+        elif tok.type == "table_close":
+            current = None
+        elif tok.type == "tr_open" and current is not None:
+            current.append([])
+        elif tok.type == "inline" and current is not None and current:
+            current[-1].append(_norm(tok.content))
+    return [rows for d, rows in tables if d == 0]
+
+
+def status_table(text: str) -> list[tuple[str, ...]] | None:
+    """The one top-level table keyed `gate`, or None if there is not exactly one."""
+    keyed = [t for t in top_level_tables(text) if t and t[0] and t[0][0] == "gate"]
+    if len(keyed) != 1:
+        return None
+    return [tuple(row) for row in keyed[0]]
+
+
+CANONICAL_SOURCE_BLOCK = (
+    "| gate | state |\n"
+    "|---|---|\n"
+    "| **S0a** | **PASS at `8cb544b`** |\n"
+    "| **§8a** | **awaiting non-author review** |\n"
+    "| **S0b** | **not started** |\n"
+    "| **S0** | **NOT complete** |\n"
+)
+
+
+def status_problems(text: str) -> list[str]:
+    """Empty iff the document carries exactly the canonical status table.
+
+    Two independent checks, because they close different holes.  The parser check is
+    what a reader of the *rendered* document sees.  The literal check is what a reader of
+    the *source* sees: GFM silently discards a cell beyond the header's column count, so
+    `| **S0** | **NOT complete** | see below |` renders as canonical while the source says
+    something else.
+    """
+    problems: list[str] = []
+    literal = text.count(CANONICAL_SOURCE_BLOCK)
+    if literal != 1:
+        problems.append(
+            f"the canonical source block appears {literal} times, expected once")
+    table = status_table(text)
+    if table is None:
+        problems.append("no single top-level GFM table keyed `gate` was found")
+        return problems
+    want = [tuple(r) for r in CANONICAL_STATUS_TABLE]
+    # Both checks are reported, never short-circuited: the row-level diff is the useful
+    # diagnostic and a literal mismatch must not hide it.
+    problems += [f"row {i}: expected {want[i] if i < len(want) else None!r}, "
+                 f"found {table[i] if i < len(table) else None!r}"
+                 for i in range(max(len(want), len(table)))
+                 if (want[i] if i < len(want) else None)
+                 != (table[i] if i < len(table) else None)]
+    return problems
+
+
+class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
+    """One canonical table, byte-for-byte after normalisation, in all three documents."""
+
+    DOCS = {
+        "README.md": REPO_ROOT / "README.md",
+        "pcap_probe_spec.md": REPO_ROOT / "docs/pcap_probe_spec.md",
+        "s0_derived_sequence.md": REPO_ROOT / "docs/s0_derived_sequence.md",
+    }
+
+    def test_every_document_carries_the_canonical_table(self):
+        for name, path in self.DOCS.items():
+            with self.subTest(doc=name):
+                self.assertEqual(status_problems(path.read_text()), [])
+
+    def test_the_three_documents_agree_with_each_other(self):
+        tables = {n: status_table(p.read_text()) for n, p in self.DOCS.items()}
+        first = next(iter(tables.values()))
+        for name, table in tables.items():
+            with self.subTest(doc=name):
+                self.assertEqual(table, first)
+
+    def test_no_antonym_list_survives(self):
+        """The mechanism is pinned by the AST, not by a substring.
+
+        A substring check for the old name fails on itself -- the literal is in the
+        assertion. Look for a module-level binding instead.
+        """
+        tree = ast.parse(Path(__file__).read_text())
+        assigned = {t.id for n in tree.body if isinstance(n, ast.Assign)
+                    for t in n.targets if isinstance(t, ast.Name)}
+        self.assertNotIn("CONTRARY_STATUS", assigned,
+                         "the antonym list is back; equality is what closes this")
+        self.assertIn("CANONICAL_STATUS_TABLE", assigned)
+
+    # --- adversarial: contradictions ADDED, not facts removed ----------------------
+
+    GOOD = ("| gate | state |\n|---|---|\n"
+            "| **S0a** | **PASS at `8cb544b`** |\n"
+            "| **§8a** | **awaiting non-author review** |\n"
+            "| **S0b** | **not started** |\n"
+            "| **S0** | **NOT complete** |\n")
+
+    def test_the_control_table_is_accepted(self):
+        self.assertEqual(status_problems(self.GOOD), [])
+
+    def test_every_appended_contradiction_is_refused(self):
+        """Both review rounds' injections, and the synonyms an antonym list would miss."""
+        appended = {
+            "S0a + awaiting non-author review": ("S0a", "; awaiting non-author review"),
+            "S0a + pending non-author review": ("S0a", "; pending non-author review"),
+            "S0a + delivered": ("S0a", "; delivered"),
+            "§8a + reviewed": ("§8a", "; reviewed"),
+            "§8a + review passed": ("§8a", "; review passed"),
+            "§8a + signed off": ("§8a", "; signed off"),
+            "S0b + active": ("S0b", "; active"),
+            "S0b + implementation complete": ("S0b", "; implementation complete"),
+            "S0b + in flight": ("S0b", "; in flight"),
+            "S0 + done": ("S0", "; done"),
+            "S0 + shipped": ("S0", "; shipped"),
+        }
+        for name, (key, suffix) in appended.items():
+            # Locate the row by its normalised key rather than rebuilding it: the table
+            # carries markup (backticks) that a reconstruction drops, so the first
+            # version of this test silently injected nothing into the S0a row.
+            row = next(l for l in self.GOOD.splitlines()
+                       if _norm(l.strip("|").split("|")[0]) == key)
+            bad = self.GOOD.replace(row, row.rstrip()[:-1].rstrip() + suffix + " |")
+            with self.subTest(case=name):
+                self.assertNotEqual(bad, self.GOOD, "the injection did not apply")
+                self.assertTrue(status_problems(bad), f"{name} was accepted")
+
+    def test_all_of_one_rounds_injections_at_once_are_refused(self):
+        bad = (self.GOOD
+               .replace("| **S0a** | **PASS at `8cb544b`** |",
+                        "| **S0a** | **PASS at `8cb544b`**; pending non-author review |")
+               .replace("| **§8a** | **awaiting non-author review** |",
+                        "| **§8a** | **awaiting non-author review**; reviewed |")
+               .replace("| **S0b** | **not started** |",
+                        "| **S0b** | **not started**; active |"))
+        problems = status_problems(bad)
+        self.assertGreaterEqual(len(problems), 3, f"only caught {problems}")
+
+    def test_a_prefix_is_refused_too(self):
+        bad = self.GOOD.replace("| **S0b** | **not started** |",
+                                "| **S0b** | probably **not started** |")
+        self.assertTrue(status_problems(bad))
+
+    def test_reordering_removing_duplicating_and_extending_are_refused(self):
+        rows = self.GOOD.splitlines(keepends=True)
+        cases = {
+            "reordered": rows[:2] + [rows[3], rows[2]] + rows[4:],
+            "row removed": rows[:4] + rows[5:],
+            "row duplicated": rows + [rows[2]],
+            "extra row": rows + ["| **S0c** | **done** |\n"],
+        }
+        for name, lines in cases.items():
+            with self.subTest(case=name):
+                self.assertTrue(status_problems("".join(lines)), f"{name} was accepted")
+
+    def test_an_extra_column_is_refused(self):
+        """GFM discards the third cell, so the parser alone cannot see this.
+
+        The rendered table is canonical; the source is not. The literal check is what
+        refuses it, and this test is why that check exists.
+        """
+        bad = self.GOOD.replace("| **S0** | **NOT complete** |",
+                                "| **S0** | **NOT complete** | see below |")
+        self.assertIsNotNone(status_table(bad), "GFM truncates: the parser sees no change")
+        self.assertEqual(status_table(bad), [tuple(r) for r in CANONICAL_STATUS_TABLE])
+        self.assertTrue(status_problems(bad), "the source-literal check must refuse it")
+
+    def test_two_status_tables_are_refused(self):
+        self.assertTrue(status_problems(self.GOOD + "\n" + self.GOOD))
+
+    def test_a_second_gate_table_with_different_rows_is_refused(self):
+        """Isolates the "exactly one" check from the source-literal check.
+
+        Two copies of the canonical table also trip the literal count, so that case
+        cannot tell whether the uniqueness check still works. This one keeps the literal
+        appearing exactly once and makes the second table say something else.
+        """
+        decoy = ("| gate | state |\n|---|---|\n"
+                 "| **S0** | **complete** |\n")
+        text = self.GOOD + "\n" + decoy
+        self.assertEqual(text.count(CANONICAL_SOURCE_BLOCK), 1)
+        problems = status_problems(text)
+        self.assertTrue(problems, "a second gate-keyed table was accepted")
+        self.assertIn("no single top-level", " ".join(problems))
+
+    def test_the_parser_dependency_is_declared(self):
+        """The guard hard-depends on it; an undeclared dependency is a broken guard."""
+        req = (REPO_ROOT / "requirements.txt").read_text()
+        lines = [l.strip() for l in req.splitlines()
+                 if l.strip() and not l.strip().startswith("#")]
+        self.assertTrue(any(l.startswith("markdown-it-py") for l in lines),
+                        f"markdown-it-py is not declared; requirements list {lines}")
+
+    def test_no_status_table_is_refused(self):
+        self.assertTrue(status_problems("no tables here"))
+
+    # --- the Markdown parser boundary ----------------------------------------------
+
+    def test_a_row_without_outer_pipes_is_seen(self):
+        """GFM permits omitting the outer pipes; the row still joins the table."""
+        bad = self.GOOD + "S0a | awaiting non-author review\n"
+        problems = status_problems(bad)
+        self.assertTrue(problems, "a pipe-less appended row was ignored")
+        self.assertIn("row 5", " ".join(problems))
+
+    def test_a_pipe_less_row_replacing_a_status_is_seen(self):
+        bad = self.GOOD + "S0 | complete\n"
+        self.assertTrue(status_problems(bad))
+
+    def test_a_fenced_canonical_table_is_not_a_table(self):
+        """Inside a fence it renders as code, so the document has no status table."""
+        for fence in ("```text", "```", "~~~"):
+            close = "~~~" if fence.startswith("~") else "```"
+            with self.subTest(fence=fence):
+                problems = status_problems(f"{fence}\n{self.GOOD}{close}\n")
+                self.assertTrue(problems)
+                self.assertIn("no single top-level", " ".join(problems))
+
+    def test_a_blockquoted_canonical_table_is_not_top_level(self):
+        quoted = "\n".join("> " + l for l in self.GOOD.splitlines()) + "\n"
+        problems = status_problems(quoted)
+        self.assertTrue(problems)
+        self.assertIn("no single top-level", " ".join(problems))
+
+    def test_a_canonical_table_inside_a_list_is_not_top_level(self):
+        listed = "- item\n\n" + "\n".join("  " + l for l in self.GOOD.splitlines())
+        self.assertTrue(status_problems(listed))
+
+    def test_a_real_table_plus_a_fenced_decoy_still_passes(self):
+        """Discriminating power: a fenced example must not break the real table."""
+        self.assertEqual(status_problems(self.GOOD + "\n```text\n| gate | state |\n```\n"),
+                         [])
+
+    def test_the_parser_is_a_gfm_parser_not_a_line_scanner(self):
+        """AST again: a substring ban matches its own assertion (second time)."""
+        tree = ast.parse(Path(__file__).read_text())
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "top_level_tables")
+        names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+        self.assertIn("_MD", names, "the table must be located by the GFM parser")
+        assigned = {t.id for n in tree.body if isinstance(n, ast.Assign)
+                    for t in n.targets if isinstance(t, ast.Name)}
+        self.assertIn("_MD", assigned)
+
+
+class TheLoopbackGateIsPresentAndReadOnly(unittest.TestCase):
+    """MCTRL[PCAP_LPBK]: loopback is not the PL frame-readback data path."""
+
+    def _plan(self, order="two-unidirectional"):
+        return P.build_plan(0x00000B99, order, 0xA5A5A5A5)
+
+    def _reject(self, plan) -> str:
+        P.check_allowlist(plan)
+        with self.assertRaises(ValueError, msg="the plan was accepted") as cm:
+            P.check_value_policy(plan)
+        return str(cm.exception)
+
+    def test_the_register_and_mask_are_the_vendor_constants(self):
+        self.assertEqual(P.REG["MCTRL"], 0xF8007080)
+        self.assertEqual(P.MCTRL_PCAP_LPBK, 0x10)
+
+    def test_mctrl_is_read_before_any_dma_in_both_orders(self):
+        for order in ("two-unidirectional", "one-bidirectional"):
+            toks = P.schedule_tokens(self._plan(order))
+            with self.subTest(order=order):
+                self.assertIn("READ_MCTRL", toks)
+                first_dma = min(i for i, t in enumerate(toks)
+                                if t in ("DMA_SRC_ADDR",))
+                self.assertLess(toks.index("READ_MCTRL"), first_dma)
+
+    def test_the_gate_names_the_mask_it_requires(self):
+        step = [s for s in self._plan()["uboot_script"]
+                if s["cmd"] == f"md.l {P.REG['MCTRL']:#010x} 1"]
+        self.assertEqual(len(step), 1)
+        self.assertIn(f"{P.MCTRL_PCAP_LPBK:#x}", step[0]["why"])
+
+    def test_mctrl_is_read_only(self):
+        plan = self._plan()
+        plan["uboot_script"].append(
+            {"step": "x", "cmd": f"mw.l {P.REG['MCTRL']:#010x} 0x00000000 1", "why": "",
+             "addresses": [P.REG["MCTRL"]]})
+        self.assertIn("read-only", self._reject(plan))
+
+    def test_removing_the_gate_is_refused(self):
+        plan = self._plan()
+        plan["uboot_script"] = [s for s in plan["uboot_script"]
+                                if s["cmd"] != f"md.l {P.REG['MCTRL']:#010x} 1"]
+        self.assertIn("diverges", self._reject(plan))
+
+    def test_reading_the_wrong_width_is_refused(self):
+        plan = self._plan()
+        for step in plan["uboot_script"]:
+            if step["cmd"] == f"md.l {P.REG['MCTRL']:#010x} 1":
+                step["cmd"] = f"md.l {P.REG['MCTRL']:#010x} 2"
+        with self.assertRaises(ValueError) as cm:
+            P.check_allowlist(plan)      # a 2-word read runs off the 4-byte region
+            P.check_value_policy(plan)
+        self.assertRegex(str(cm.exception), r"unscheduled|not contained|diverges")
+
+    def test_the_document_records_the_gate_and_why_reset_is_not_enough(self):
+        seq = " ".join((REPO_ROOT / "docs/s0_derived_sequence.md")
+                       .read_text().replace("*", "").split())
+        self.assertRegex(seq, r"0xF8007080")
+        self.assertRegex(seq, r"reset value being 0 does not substitute for the live read")
+        self.assertRegex(seq, r"enabling it for `XDCFG_CONCURRENT_NONSEC_READ_WRITE`")
+
+
+class TheSuiteCannotSilentlyShrink(unittest.TestCase):
+    """`unittest.main()` must be the last statement in the file.
+
+    It had drifted above five classes, so running the file directly exercised 117 of its
+    122 tests while discovery ran all of them -- the shortfall being exactly the newest
+    guards, which is the worst possible five to lose.
+    """
+
+    @staticmethod
+    def _is_main_guard(node) -> bool:
+        # ast.unparse normalises quotes, so compare structure rather than text.
+        if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+            return False
+        left, comps = node.test.left, node.test.comparators
+        return (isinstance(left, ast.Name) and left.id == "__name__"
+                and len(comps) == 1 and isinstance(comps[0], ast.Constant)
+                and comps[0].value == "__main__")
+
+    def test_the_main_guard_is_the_last_statement(self):
+        tree = ast.parse(Path(__file__).read_text())
+        self.assertTrue(self._is_main_guard(tree.body[-1]),
+                        "the file must end with the __main__ guard")
+
+    def test_every_test_class_is_defined_before_it(self):
+        tree = ast.parse(Path(__file__).read_text())
+        guards = [n for n in tree.body if self._is_main_guard(n)]
+        self.assertEqual(len(guards), 1, "exactly one __main__ guard")
+        after = [n.name for n in tree.body
+                 if isinstance(n, ast.ClassDef) and n.lineno > guards[0].lineno]
+        self.assertEqual(after, [], f"classes defined after the guard: {after}")
+
+    def test_direct_execution_and_discovery_agree(self):
+        """Measured, not merely asserted structurally: run this file both ways.
+
+        Guarded against self-recursion.  The first version spawned children that ran this
+        same file -- including this test -- and forked without bound; a guard that hangs
+        the suite is worse than the drift it exists to catch.
+        """
+        if os.environ.get("PSMAP_SUITE_COUNT_CHILD"):
+            self.skipTest("child process: counting only")
+        env = {**os.environ, "PSMAP_SUITE_COUNT_CHILD": "1"}
+        direct = subprocess.run([sys.executable, str(Path(__file__))],
+                                cwd=REPO_ROOT, capture_output=True, text=True,
+                                env=env, timeout=120)
+        found = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests",
+             "-p", Path(__file__).name],
+            cwd=REPO_ROOT, capture_output=True, text=True, env=env, timeout=120)
+        n_direct = re.search(r"^Ran (\d+) tests", direct.stderr, re.M)
+        n_found = re.search(r"^Ran (\d+) tests", found.stderr, re.M)
+        self.assertIsNotNone(n_direct, direct.stderr[-400:])
+        self.assertIsNotNone(n_found, found.stderr[-400:])
+        self.assertEqual(n_direct.group(1), n_found.group(1),
+                         "running this file directly must exercise every test in it")
+
 
 if __name__ == "__main__":
     unittest.main()

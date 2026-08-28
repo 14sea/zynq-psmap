@@ -5,16 +5,22 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a delivered, awaiting non-author review
+## Status — S0a passed at `8cb544b`; §8a delta awaiting review
+
+| gate | state |
+|---|---|
+| **S0a** | **PASS at `8cb544b`** |
+| **§8a** | **awaiting non-author review** |
+| **S0b** | **not started** |
+| **S0** | **NOT complete** |
 
 | | |
 |---|---|
-| stage | **S0a — host-only derivation delivered, awaiting non-author review** |
-| **S0 as a whole** | **NOT complete** — see below |
 | board | **not touched, and not authorised** |
-| S0a | §2b discharged against UG585; §2c derived and pinned against UG585 **and UG470**; planner + guards; §4 target selection reproduced |
-| **S0b — runner, `BoardSession`, identity/epoch, tests** | **not started** |
-| blocking S0 | §8a: UG585 contradicts itself on the DMA command shape, and the specification requires the exact sequence to be *pinned* |
+| S0a scope | §2b discharged against UG585; §2c derived and pinned against UG585 **and UG470**; planner + guards; §4 target selection reproduced |
+| §8a content | resolved host-only 2026-08-28: two unidirectional DMA commands with the non-active endpoint's length 0, as AMD's `XDcfg_PcapReadback()` issues; the losing reading is retained as an alternative a new run may adopt after any stop |
+| S0b scope | the runner, one `BoardSession` carrying one identity and one epoch across loader and runner, and their tests |
+| what blocks S0 | S0b |
 | S1–S3 (on silicon) | **not authorised** |
 | tests | see the command below |
 
@@ -32,8 +38,9 @@ S0a's two documents are [`docs/s0_ug585_discharge.md`](docs/s0_ug585_discharge.m
 UG585 actually says, and the six constraints it imposes that the specification did not
 carry — and [`docs/s0_derived_sequence.md`](docs/s0_derived_sequence.md), which pins the
 command words, the DMA registers, the completion and overflow bits, the buffers and the
-cache handling. Two questions are pinned **UNRESOLVED** rather than defaulted; the planner
-refuses to run without being told which reading to use.
+cache handling. **§8a is resolved** — a readback is two unidirectional DMA commands, which
+is what AMD's own `XDcfg_PcapReadback()` issues — and the planner defaults to that pinned
+reading. **§8b is still pinned UNRESOLVED** rather than defaulted.
 
 ## Why this is a separate repository
 

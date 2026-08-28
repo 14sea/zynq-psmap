@@ -7,11 +7,13 @@ a serial port, and there is no code path that does.  The probe stages S1-S3 are 
 authorised; this exists so the sequence `docs/s0_derived_sequence.md` pins can be checked
 by machine rather than by reading.
 
-Two deliberate refusals, both from that document:
+Two properties, both from that document:
 
-* `--dma-order` has **no default**.  UG585 contradicts itself about whether a readback is
-  two unidirectional DMA commands or one bidirectional command (S0 8a), and picking one
-  quietly is how an unresolved question becomes an assumption nobody can find later.
+* `--dma-order` defaults to the **pinned** reading.  S0 §8a is resolved -- a readback is
+  two unidirectional DMA commands, which is what AMD's own `XDcfg_PcapReadback()` issues --
+  and the bidirectional reading is retained only as the named alternative for a NEW run.
+  While §8a was open there was deliberately no default; that was right then and is wrong
+  now.
 * every address is checked against a fixed allowlist, and any `FDRI` write is refused
   before a plan is produced at all.
 """
@@ -33,7 +35,15 @@ REG = {
     "DMA_DEST_ADDR": DEVCFG_BASE + 0x01C,
     "DMA_SRC_LEN":   DEVCFG_BASE + 0x020,
     "DMA_DEST_LEN":  DEVCFG_BASE + 0x024,
+    "MCTRL":         DEVCFG_BASE + 0x080,
 }
+# MCTRL[4] PCAP_LPBK (XDCFG_MCTRL_PCAP_LPBK_MASK = 0x10).  With loopback enabled the data
+# path is not PL frame readback.  The sources do not establish the exact outcome for this
+# probe's unequal command/read lengths.  AMD's readback path clears the bit every time;
+# §5e forbids adjusting, so this probe READS it and refuses to proceed.  The reset value is
+# 0 and that does NOT substitute for the live read: it is writable mode state, and anything
+# earlier in the boot may have set it.
+MCTRL_PCAP_LPBK = 0x00000010
 # UG585: "programmed in the exact sequence as described"; DEST_LEN queues the command.
 DMA_WRITE_ORDER = ("DMA_SRC_ADDR", "DMA_DEST_ADDR", "DMA_SRC_LEN", "DMA_DEST_LEN")
 
@@ -162,15 +172,15 @@ def _tagged(addr: int) -> int:
 
 
 def dma_commands(order: str, cmd_words: int, read_words: int) -> list[dict]:
-    """UG585 8a is unresolved, so the caller must say which reading it is using."""
+    """S0 §8a is resolved; `order` selects the pinned reading or the named alternative."""
     if order == "two-unidirectional":
         return [
             {"name": "command", "DMA_SRC_ADDR": _tagged(CMD_BUF),
              "DMA_DEST_ADDR": PCAP_ENDPOINT,
-             "DMA_SRC_LEN": cmd_words, "DMA_DEST_LEN": cmd_words},
+             "DMA_SRC_LEN": cmd_words, "DMA_DEST_LEN": 0},
             {"name": "readback", "DMA_SRC_ADDR": PCAP_ENDPOINT,
              "DMA_DEST_ADDR": _tagged(DST_BUF),
-             "DMA_SRC_LEN": read_words, "DMA_DEST_LEN": read_words},
+             "DMA_SRC_LEN": 0, "DMA_DEST_LEN": read_words},
         ]
     if order == "one-bidirectional":
         return [
@@ -222,20 +232,37 @@ def parse_command(cmd: str) -> tuple[str, int, int]:
 # structurally nothing.  These checks adjudicate whole transactions and exact streams,
 # and the per-value sets are gone rather than extended.
 
-READ_ONLY_REGISTERS = {REG["CTRL"], REG["STATUS"]}
+READ_ONLY_REGISTERS = {REG["CTRL"], REG["STATUS"], REG["MCTRL"]}
 CLEANUP_WORDS = 5
+
+# S0 §8a, resolved 2026-08-28: UG585 contradicts itself, and AMD's own readback API issues
+# two unidirectional transfers.  The other reading is retained as the alternative a NEW run
+# may adopt after ANY stop -- not only after a particular error bit.
+PINNED_DMA_ORDER = "two-unidirectional"
+ALTERNATIVE_DMA_ORDER = "one-bidirectional"
+# Named for what they ARE, not for what they would prove.  An earlier version called these
+# "*_PINNED_WRONG" and reported them as the observation that would reveal a wrong pin;
+# UG585's INT_STS table assigns each bit a general meaning and establishes no such causal
+# mapping.  They are generic error stops a wrong pin MIGHT surface as, among others.
+CANDIDATE_DIAGNOSIS_BITS = {"DMA_CMD_ERR": 1 << 15, "P2D_LEN_ERR": 1 << 11}
 
 # Every DMA transaction this probe may issue, as a complete tuple in the normative write
 # order (SRC_ADDR, DEST_ADDR, SRC_LEN, DEST_LEN).  Nothing else is a legal transaction.
+# The length of the NON-ACTIVE endpoint is 0, not a mirror of the active one.  That is
+# what AMD's own driver does -- XDcfg_PcapReadback() issues (Source, INVALID, SrcLen, 0)
+# then (INVALID, Dest, 0, DestLen) -- and an earlier version of this file mirrored the
+# lengths by generalising from UG585's *configuration* example, which is a write and does
+# not transfer to readback.  The result refused the vendor's own tuples and permitted
+# tuples no vendor implementation issues.
 LEGAL_DMA_TRANSACTIONS = {
-    "command":       (CMD_BUF | DMA_HOLD_TAG, PCAP_ENDPOINT,
-                      CMD_STREAM_WORDS, CMD_STREAM_WORDS),
-    "readback":      (PCAP_ENDPOINT, DST_BUF | DMA_HOLD_TAG,
-                      READBACK_WORDS, READBACK_WORDS),
+    "command":       (CMD_BUF | DMA_HOLD_TAG, PCAP_ENDPOINT, CMD_STREAM_WORDS, 0),
+    "readback":      (PCAP_ENDPOINT, DST_BUF | DMA_HOLD_TAG, 0, READBACK_WORDS),
+    "cleanup":       (CMD_BUF | DMA_HOLD_TAG, PCAP_ENDPOINT, CLEANUP_WORDS, 0),
+    # The §8a alternative remains constructible, but is not adopted by the vendor
+    # readback API.  That supports the pinned transaction shape; it does not establish
+    # that the silicon must reject this alternative tuple.
     "bidirectional": (CMD_BUF | DMA_HOLD_TAG, DST_BUF | DMA_HOLD_TAG,
                       CMD_STREAM_WORDS, READBACK_WORDS),
-    "cleanup":       (CMD_BUF | DMA_HOLD_TAG, PCAP_ENDPOINT,
-                      CLEANUP_WORDS, CLEANUP_WORDS),
 }
 
 
@@ -399,6 +426,8 @@ def schedule_tokens(plan: dict) -> list:
             count = int(parts[2], 0)
             if start == REG["CTRL"] and count == 1:
                 tok = "READ_CTRL"
+            elif start == REG["MCTRL"] and count == 1:
+                tok = "READ_MCTRL"
             elif start == REG["INT_STS"] and count == 1:
                 tok = "READ_INT_STS"
             elif start == DST_BUF and count == READBACK_WORDS:
@@ -442,7 +471,7 @@ def _dma_block(words: int) -> list:
 
 def expected_schedule(order: str, sentinel: int) -> list:
     check_sentinel(sentinel)
-    prologue = ["CACHE", "READ_CTRL", "READ_INT_STS",
+    prologue = ["CACHE", "READ_CTRL", "READ_MCTRL", "READ_INT_STS",
                 ("FILL_DST", sentinel, READBACK_WORDS), "READ_DST",
                 ("CMD_STREAM", CMD_STREAM_WORDS)]
     transfers = _dma_block(0) * 2 if order == "two-unidirectional" else _dma_block(0)
@@ -586,6 +615,10 @@ def build_plan(far: int, order: str, sentinel: int) -> dict:
         {"step": "ctrl-gate", "cmd": f"md.l {REG['CTRL']:#010x} 1",
          "why": f"masked-bit gate: (CTRL & {CTRL_MASK:#010x}) == {CTRL_REQUIRED:#010x}",
          "addresses": [REG["CTRL"]]},
+        {"step": "loopback-gate", "cmd": f"md.l {REG['MCTRL']:#010x} 1",
+         "why": f"(MCTRL & {MCTRL_PCAP_LPBK:#x}) must be 0, or STOP before any DMA: "
+                f"loopback selects a different data path whose exact outcome is not pinned",
+         "addresses": [REG["MCTRL"]]},
         {"step": "pcfg-done", "cmd": f"md.l {REG['INT_STS']:#010x} 1",
          "why": f"UG585 N1: readback forbidden until INT_STS[2] ({INT_STS_PCFG_DONE:#x})",
          "addresses": [REG["INT_STS"]]},
@@ -617,7 +650,7 @@ def build_plan(far: int, order: str, sentinel: int) -> dict:
     script.extend(_dma_steps({
         "name": "cleanup", "DMA_SRC_ADDR": _tagged(CMD_BUF),
         "DMA_DEST_ADDR": PCAP_ENDPOINT,
-        "DMA_SRC_LEN": len(clean), "DMA_DEST_LEN": len(clean)}))
+        "DMA_SRC_LEN": len(clean), "DMA_DEST_LEN": 0}))
     script.append({"step": "status-final", "cmd": f"md.l {REG['INT_STS']:#010x} 1",
                    "why": "recorded verbatim in the stage record",
                    "addresses": [REG["INT_STS"]]})
@@ -627,7 +660,14 @@ def build_plan(far: int, order: str, sentinel: int) -> dict:
         "board_action": "NONE - this is a plan, not an execution",
         "target_far": far,
         "dma_order": order,
-        "unresolved": ["S0 8a: DMA command shape", "S0 8b: 2'b01 tag with a PCAP endpoint"],
+        "unresolved": ["S0 8b: 2'b01 tag with a PCAP endpoint"],
+        "pinned_dma_order": PINNED_DMA_ORDER,
+        "alternative_dma_order": ALTERNATIVE_DMA_ORDER,
+        "candidate_diagnoses": {n: f"INT_STS[{b.bit_length() - 1}] {n}"
+                                for n, b in CANDIDATE_DIAGNOSIS_BITS.items()},
+        "candidate_diagnoses_note": (
+            "generic error stops; not exclusive, not necessary, and no claim that a wrong "
+            "pin cannot fail silently"),
         "command_words": cmds,
         "command_word_count": len(cmds),
         "readback_words": READBACK_WORDS,
@@ -652,9 +692,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--far", default="0x00000b99",
                     help="target frame address (default: the pinned positive control)")
-    ap.add_argument("--dma-order", required=True,
+    ap.add_argument("--dma-order", default=PINNED_DMA_ORDER,
                     choices=("two-unidirectional", "one-bidirectional"),
-                    help="UNRESOLVED in UG585 (S0 8a) - there is deliberately no default")
+                    help="S0 §8a is resolved: the default is the pinned reading. "
+                         "'one-bidirectional' is the retained alternative that a NEW run "
+                         "may adopt after any stop - never a retry inside a run")
     ap.add_argument("--sentinel", default="0xA5A5A5A5")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
