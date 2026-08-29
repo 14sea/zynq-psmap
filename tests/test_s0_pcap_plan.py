@@ -1870,8 +1870,15 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         for target_name, target_path in docs.items():
             reason = f"injected for {target_name}: the helper reported a problem"
 
-            def _verdict(path, *, _target=target_path, _reason=reason):
-                return [_reason] if path == _target else []
+            # The reason names the path the helper was ASKED about, not the target of
+            # this iteration.  Deriving it from the target instead let a verdict that
+            # fires for every document -- the very behaviour this loop replaced -- pass
+            # unnoticed: each iteration would fail on the first document while quoting
+            # the reason it was looking for.
+            def _verdict(path, *, _target=target_path):
+                if path != _target:
+                    return []
+                return [f"injected for {path.name}: the helper reported a problem"]
 
             case = type(self)("test_every_document_carries_the_canonical_table")
             with self.subTest(target=target_name):
