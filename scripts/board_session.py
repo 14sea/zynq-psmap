@@ -1,0 +1,388 @@
+#!/usr/bin/env python3
+"""One open transport, one identity, one epoch — across loader AND runner (S0b).
+
+`docs/pcap_probe_spec.md` §2a names this as S0b: "one `BoardSession` carrying one identity
+and one epoch across loader and runner". The snapshot's §5a.3 and §5d.1 are the
+requirements; `docs/authority_requirements.md` records why the source repository's module
+was not imported. This module is written against those three texts and nothing else.
+
+What is structural here
+-----------------------
+
+1. **The port is resolved once, at open, and never again.** The loader in the source
+   repository closed the serial port around the ymodem transfer and reopened it, which is
+   where "one session" was silently two. `SerialTransport.ymodem_send()` hands the *already
+   open* file descriptor to `sb`; the handle is never closed and the symlink is never
+   re-resolved between identity and the probe.
+
+2. **Every reply is guarded before it is believed.** A boot banner anywhere in a reply
+   means the board restarted under the command; a missing prompt means the reply is
+   truncated. Both end the epoch and refuse — there is no "probably fine" path.
+
+3. **No bare CR, ever.** U-Boot repeats the last command on an empty line, and a repeated
+   `md` resumes one word past the previous read. The sync is a named no-op (`echo`).
+
+4. **Identity is a fixed constant.** `17A6`, role `verify`, XC7Z010 IDCODE. No flag, no
+   environment variable, no argument relaxes it; widening it is a source edit.
+
+5. **A `linux` control plane is refused unconditionally** (spec §3, §5d.4). This session
+   knows one control plane, and it is U-Boot.
+
+6. **Capabilities are objects, not strings.** The configuration-read capability and the
+   one setup-load capability are module-private instances; a caller that does not hold
+   the instance cannot ask for the operation. That is how "a new, named configuration-read
+   capability, distinct from `write_sequence()`" (§5d.2) is made checkable.
+
+Nothing in this module performs a devcfg or DMA write; the runner owns the probe script
+and this module owns *who may send it*.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+
+TOOL_VERSION = "board_session.py/0.1.0"
+
+PORT = "/dev/ebaz-uart"
+BAUD = 115200
+CONTROL_PLANE = "uboot"
+
+# --------------------------------------------------------------- frozen requirements
+REQUIRED_BOARDID = "17A6"
+REQUIRED_ROLE = "verify"
+SLCR_PSS_IDCODE = 0xF8000530
+IDCODE_MASK = 0x0FFFFFFF               # bits 31:28 are the silicon revision
+REQUIRED_IDCODE = 0x13722093 & IDCODE_MASK
+
+DEVCFG_INT_STS = 0xF800700C
+PCFG_DONE = 1 << 2
+
+# --------------------------------------------------------------------- wire format
+PROMPT_RE = re.compile(rb"(?P<prompt>zynq-uboot|Zynq)> ?$")
+BOOT_BANNER_RE = re.compile(
+    rb"U-Boot SPL|\r?\nU-Boot \d|Trying to boot from|Model: Ebang|"
+    rb"Loading Environment from FAT|No ethernet found")
+ENV_LINE_RE = re.compile(rb"^([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$", re.MULTILINE)
+MD_LINE_RE = re.compile(rb"^([0-9a-fA-F]{8}):((?:\s+[0-9a-fA-F]{8}){1,4})", re.MULTILINE)
+READY_RE = re.compile(rb"Ready for binary|CC")
+SYNC_COMMAND = "echo"
+
+WRITE_CHUNK = 32          # U-Boot echoes with a blocking putc; pace the write
+WRITE_GAP_S = 0.002
+
+DISRUPTIONS = frozenset({
+    "transport_reopen", "timeout", "uart_disconnect", "prompt_mode_change",
+    "soft_reset", "power_cycle", "recovery",
+})
+
+
+class SessionRefusal(Exception):
+    """Every non-pass path out of this module. Never caught to continue."""
+
+
+class _Capability:
+    """A token only this module can mint. Holding the instance is the permission."""
+
+    __slots__ = ("name",)
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __repr__(self) -> str:
+        return f"<capability {self.name}>"
+
+
+CONFIG_READ_CAPABILITY = _Capability("configuration-read")   # spec §5d.2
+SETUP_LOAD_CAPABILITY = _Capability("setup-load")            # spec §5a.5, the one write
+
+
+# ------------------------------------------------------------------------- parsing
+
+
+def preserve(command: str, raw: bytes) -> dict:
+    """Every byte that came back, in a form that cannot lose one (raw UART log, §10)."""
+    return {"command": command, "byte_count": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "base64": base64.b64encode(raw).decode("ascii"),
+            "text": raw.decode("ascii", "replace")}
+
+
+def parse_env_value(reply: bytes, name: str) -> str:
+    """Exactly one assignment of `name`, or a refusal (echoes and stale lines are ambiguity)."""
+    matches = [v.decode("ascii", "replace") for k, v in ENV_LINE_RE.findall(reply)
+               if k.decode("ascii", "replace") == name]
+    if not matches:
+        raise SessionRefusal(f"{name} is not set on this board — refused")
+    if len(matches) > 1:
+        raise SessionRefusal(f"{name} appears {len(matches)} times in one reply — ambiguous")
+    value = matches[0].strip()
+    if not value:
+        raise SessionRefusal(f"{name} is set but empty")
+    return value
+
+
+def parse_md(reply: bytes, addr: int, count: int) -> list[int]:
+    """`md.l <addr> <count>` → exactly `count` words at exactly the requested addresses.
+
+    A word count that does not match, a line at an unexpected address, or no lines at all
+    is a refusal: an undercount would let a partial buffer be adjudicated as a whole one.
+    """
+    words: list[int] = []
+    expect = addr
+    for line_addr, body in MD_LINE_RE.findall(reply):
+        if int(line_addr, 16) != expect:
+            raise SessionRefusal(
+                f"md line at {int(line_addr, 16):#010x}, expected {expect:#010x}")
+        vals = [int(w, 16) for w in body.split()]
+        words.extend(vals)
+        expect += 4 * len(vals)
+    if len(words) != count:
+        raise SessionRefusal(
+            f"md.l {addr:#010x} {count:#x} returned {len(words)} words, not {count}")
+    return words
+
+
+# ---------------------------------------------------------------------- transports
+
+
+class SerialTransport:
+    """Owns one open serial handle for the whole session; resolved once, never reopened."""
+
+    def __init__(self, port: str = PORT, baud: int = BAUD):
+        try:
+            import serial  # noqa: PLC0415 — deferred so tests import without pyserial
+        except ImportError as exc:  # pragma: no cover
+            raise SessionRefusal("pyserial is required for board sessions") from exc
+        self.requested_port = port
+        self.resolved_port = os.path.realpath(port)
+        try:
+            stat = os.stat(self.resolved_port)
+        except OSError as exc:
+            raise SessionRefusal(f"cannot stat {port}: {exc}") from exc
+        self.device_id = f"{os.major(stat.st_rdev)}:{os.minor(stat.st_rdev)}"
+        self._serial = serial.Serial(self.resolved_port, baud, timeout=0.1)
+
+    def _read_until(self, pattern: re.Pattern, timeout: float) -> bytes:
+        buf, t0 = b"", time.monotonic()
+        while time.monotonic() - t0 < timeout:
+            chunk = self._serial.read(512)
+            if chunk:
+                buf += chunk
+                if pattern.search(buf):
+                    break
+        return buf
+
+    def command(self, line: str, timeout: float) -> bytes:
+        self._serial.reset_input_buffer()
+        data = line.encode("ascii") + b"\r"
+        for start in range(0, len(data), WRITE_CHUNK):
+            self._serial.write(data[start:start + WRITE_CHUNK])
+            if len(data) > WRITE_CHUNK:
+                time.sleep(WRITE_GAP_S)
+        return self._read_until(PROMPT_RE, timeout)
+
+    def ymodem_send(self, path: Path, log: Path, timeout: float) -> bytes:
+        """`sb -k` over THIS handle's descriptor. The port is not closed or reopened."""
+        fd = self._serial.fileno()
+        with open(log, "wb") as logf:
+            rc = subprocess.run(["sb", "-k", str(path)], stdin=fd, stdout=fd,
+                                stderr=logf, check=False)
+        if rc.returncode != 0:
+            raise SessionRefusal(f"sb failed rc={rc.returncode} (see {log})")
+        return self._read_until(PROMPT_RE, timeout)
+
+    def wait_ready(self, timeout: float) -> bytes:
+        return self._read_until(READY_RE, timeout)
+
+    def descriptor(self) -> dict:
+        return {"requested_port": self.requested_port, "resolved_port": self.resolved_port,
+                "device_id": self.device_id}
+
+    def close(self) -> None:
+        self._serial.close()
+
+
+# ------------------------------------------------------------------------ the session
+
+
+class BoardSession:
+    """One transport, one identity, one epoch, one plmark — and nothing without all of them."""
+
+    def __init__(self, transport):
+        self.transport = transport
+        self.epoch = 0
+        self.disruptions: list[dict] = []
+        self.log: list[dict] = []          # every command and reply, preserved (§10)
+        self._identity: dict | None = None
+        self._prompt_mode: str | None = None
+        self.plmark: str | None = None
+        self.setup_load: dict | None = None
+
+    # -- epoch ------------------------------------------------------------------
+
+    def note_disruption(self, kind: str, detail: str = "") -> int:
+        if kind not in DISRUPTIONS:
+            raise SessionRefusal(f"unknown disruption {kind!r}; one of {sorted(DISRUPTIONS)}")
+        self.epoch += 1
+        self._identity = None
+        self.plmark = None
+        self.disruptions.append({"epoch_ended": self.epoch - 1, "kind": kind,
+                                 "detail": detail, "at": time.time()})
+        return self.epoch
+
+    # -- the guarded command ----------------------------------------------------
+
+    def command(self, line: str, timeout: float = 1.5) -> bytes:
+        """Send one named command; refuse an empty line; guard the reply before returning."""
+        if not line.strip():
+            raise SessionRefusal("an empty line repeats U-Boot's last command; refused")
+        raw = self.transport.command(line, timeout)
+        self.log.append(preserve(line, raw))
+        if BOOT_BANNER_RE.search(raw):
+            self.note_disruption("soft_reset", f"boot banner in the reply to {line!r}")
+            raise SessionRefusal(f"the board restarted under {line!r}")
+        m = PROMPT_RE.search(raw)
+        if not m:
+            self.note_disruption("timeout", f"no prompt after {line!r}")
+            raise SessionRefusal(f"no U-Boot prompt after {line!r}: {raw[-80:]!r}")
+        prompt = m.group("prompt").decode("ascii")
+        if self._prompt_mode is None:
+            self._prompt_mode = prompt
+        elif prompt != self._prompt_mode:
+            previous, self._prompt_mode = self._prompt_mode, prompt
+            self.note_disruption("prompt_mode_change", f"{previous!r} -> {prompt!r}")
+            raise SessionRefusal(f"the prompt changed from {previous!r} to {prompt!r}")
+        return raw
+
+    def sync(self) -> bytes:
+        return self.command(SYNC_COMMAND, 2.0)
+
+    def read_words(self, addr: int, count: int, timeout: float = 3.0) -> list[int]:
+        return self.read_command(f"md.l {addr:#010x} {count:#x}", addr, count, timeout)
+
+    def read_command(self, cmd: str, addr: int, count: int, timeout: float = 3.0) -> list[int]:
+        """Send an `md.l` line exactly as given (the plan's text, not a reformatting)."""
+        return parse_md(self.command(cmd, timeout), addr, count)
+
+    def read_word(self, addr: int) -> int:
+        return self.read_words(addr, 1)[0]
+
+    # -- identity ---------------------------------------------------------------
+
+    def verify_identity(self) -> dict:
+        """§5a.3 / §5b.1: boardid, role and IDCODE on THIS session, in THIS epoch."""
+        started = time.time()
+        findings: list[str] = []
+        boardid = parse_env_value(self.command("printenv boardid"), "boardid")
+        role = parse_env_value(self.command("printenv role"), "role")
+        idcode = self.read_word(SLCR_PSS_IDCODE)
+        if boardid != REQUIRED_BOARDID:
+            findings.append(f"boardid {boardid!r} != {REQUIRED_BOARDID!r}")
+        if role != REQUIRED_ROLE:
+            findings.append(f"role {role!r} != {REQUIRED_ROLE!r}")
+        if idcode & IDCODE_MASK != REQUIRED_IDCODE:
+            findings.append(f"PSS_IDCODE {idcode:#010x} is not XC7Z010")
+        identity = {
+            "tool": TOOL_VERSION,
+            "transport": self.transport.descriptor(),
+            "parsed": {"boardid": boardid, "role": role, "pss_idcode": f"{idcode:#010x}"},
+            "requirements": {"boardid": REQUIRED_BOARDID, "role": REQUIRED_ROLE,
+                             "idcode_masked": f"{REQUIRED_IDCODE:#010x}"},
+            "control_plane": CONTROL_PLANE,
+            "epoch": self.epoch,
+            "elapsed_s": round(time.time() - started, 3),
+            "findings": findings,
+        }
+        if findings:
+            self._identity = None
+            raise SessionRefusal("board identity refused: " + "; ".join(findings))
+        self._identity = identity
+        return identity
+
+    @property
+    def identity(self) -> dict | None:
+        return self._identity
+
+    # -- the interlock ----------------------------------------------------------
+
+    def authorise(self, capability: _Capability, control_plane: str = CONTROL_PLANE) -> dict:
+        """The only door to a device operation: this capability, this session, this epoch."""
+        if not isinstance(capability, _Capability):
+            raise SessionRefusal("a capability instance is required, not a name")
+        if control_plane != CONTROL_PLANE:
+            raise SessionRefusal(
+                f"control plane {control_plane!r} is refused; this session is U-Boot only")
+        if self._identity is None:
+            raise SessionRefusal("no verified identity on this session")
+        if self._identity["epoch"] != self.epoch:
+            raise SessionRefusal(
+                f"identity is from epoch {self._identity['epoch']}, session is in "
+                f"epoch {self.epoch} — re-verify")
+        return self._identity
+
+    def check_plmark(self) -> str:
+        """§5a.6: the same plmark at every stage; a reboot ends the probe."""
+        if self.plmark is None:
+            raise SessionRefusal("no plmark on this session — no setup load in this epoch")
+        seen = parse_env_value(self.command("printenv plmark"), "plmark")
+        if seen != self.plmark:
+            self.note_disruption("power_cycle", f"plmark {self.plmark} -> {seen}")
+            raise SessionRefusal("plmark changed — not the boot that configured the PL")
+        return seen
+
+    # -- the one configuration write (§5a.4–5) -----------------------------------
+
+    def load_carrier(self, capability: _Capability, bit_path: Path, expected_sha256: str,
+                     load_addr: int = 0x04000000, log_path: Path = Path("/tmp/sb-psmap.log"),
+                     ) -> dict:
+        """The session's single configuration write, on the verified identity's session."""
+        if capability is not SETUP_LOAD_CAPABILITY:
+            raise SessionRefusal("the setup load needs SETUP_LOAD_CAPABILITY")
+        identity = self.authorise(capability)
+        data = bit_path.read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        if sha != expected_sha256:
+            raise SessionRefusal(f"bitstream sha256 {sha} != pinned {expected_sha256}")
+        before = self.read_word(DEVCFG_INT_STS)
+        if before & PCFG_DONE:
+            raise SessionRefusal(
+                f"the PL is already configured (INT_STS={before:#010x}); power-cycle first")
+        size = len(data)
+        # loady -> ymodem on the SAME handle -> prompt
+        self.transport.command(f"loady {load_addr:#010x}", 0.5)
+        ready = self.transport.wait_ready(6.0)
+        self.log.append(preserve(f"loady {load_addr:#010x}", ready))
+        if not READY_RE.search(ready):
+            self.note_disruption("timeout", "loady did not become ready")
+            raise SessionRefusal("loady did not become ready for ymodem")
+        tail = self.transport.ymodem_send(bit_path, log_path, 20.0)
+        self.log.append(preserve("sb -k", tail))
+        if not PROMPT_RE.search(tail):
+            self.note_disruption("timeout", "no prompt after ymodem")
+            raise SessionRefusal("no prompt after the ymodem transfer")
+        # clear the sticky PCFG_DONE so the post-load check is an edge
+        self.command(f"mw.l {DEVCFG_INT_STS:#010x} {PCFG_DONE:#010x} 1")
+        cleared = self.read_word(DEVCFG_INT_STS)
+        if cleared & PCFG_DONE:
+            raise SessionRefusal(f"PCFG_DONE did not clear (INT_STS={cleared:#010x})")
+        self.command(f"fpga loadb 0 {load_addr:#010x} {size:#010x}", 30.0)
+        after = self.read_word(DEVCFG_INT_STS)
+        if not after & PCFG_DONE:
+            raise SessionRefusal(
+                f"configuration did not happen: INT_STS={after:#010x}, PCFG_DONE clear")
+        marker = f"{time.time_ns():016x}"
+        self.command(f"setenv plmark {marker}")
+        self.plmark = marker
+        self.setup_load = {
+            "bitstream": str(bit_path), "sha256": sha, "bytes": size,
+            "load_addr": f"{load_addr:#010x}", "int_sts_before": f"{before:#010x}",
+            "int_sts_cleared": f"{cleared:#010x}", "int_sts_after": f"{after:#010x}",
+            "plmark": marker, "epoch": self.epoch, "boardid": identity["parsed"]["boardid"],
+        }
+        return self.setup_load

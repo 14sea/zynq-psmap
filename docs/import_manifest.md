@@ -126,6 +126,9 @@ not the stage label, is what it enforces.
 | `scripts/pcap_probe_plan.py` |
 | `tests/test_s0_pcap_plan.py` |
 | `docs/line_plan.md` |
+| `scripts/board_session.py` |
+| `scripts/pcap_probe_runner.py` |
+| `tests/test_s0b_runner.py` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported
