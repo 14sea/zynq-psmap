@@ -75,7 +75,9 @@ BOOT_BANNER_RE = re.compile(
 ENV_LINE_RE = re.compile(rb"^([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$", re.MULTILINE)
 MD_LINE_RE = re.compile(rb"^([0-9a-fA-F]{8}):((?:\s+[0-9a-fA-F]{8}){1,4})", re.MULTILINE)
 READY_RE = re.compile(rb"Ready for binary|CC")
-YMODEM_SIZE_RE = re.compile(rb"Total Size = (0x[0-9a-fA-F]+)")
+# U-Boot pads the label: "## Total Size      = 0x001fcc17 = 2083863 Bytes" (observed on
+# 17A6, evidence/s1s3_17A6_2026-08-29-01). A single-space regex consumed a ruling.
+YMODEM_SIZE_RE = re.compile(rb"Total Size\s*=\s*(0x[0-9a-fA-F]+)")
 SYNC_COMMAND = "echo"
 
 WRITE_CHUNK = 32          # U-Boot echoes with a blocking putc; pace the write

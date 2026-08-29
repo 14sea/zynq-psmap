@@ -151,8 +151,10 @@ class FakeTransport:
     def ymodem_send(self, path, log, timeout):
         self.sb_calls.append(path)
         Path(log).write_bytes(b"fake sb log")
-        self.rx += (f"## Total Size = {self.board.reported_size:#010x} = "
-                    f"{self.board.reported_size} Bytes".encode() + PROMPT)
+        # verbatim shape from the board (evidence/s1s3_17A6_2026-08-29-01): padded label
+        self.rx += (f"## Total Size      = {self.board.reported_size:#010x} = "
+                    f"{self.board.reported_size} Bytes\r\n## Start Addr      = 0x04000000"
+                    .encode() + PROMPT)
 
     def descriptor(self):
         return {"requested_port": "fake", "resolved_port": "fake", "device_id": "0:0"}
@@ -425,6 +427,15 @@ class SetupLoad(unittest.TestCase):
         s.verify_identity()
         b.unsolicited = b"\r\nZynq> "
         s.begin_ymodem(0x04000000)
+
+    def test_the_real_total_size_line_from_the_board_is_parsed(self):
+        """Board run 2026-08-29 #2: the padded label defeated a single-space regex."""
+        tail = (b"## Total Size      = 0x001fcc17 = 2083863 Bytes\r\n"
+                b"## Start Addr      = 0x04000000\r\nZynq> ")
+        m = bsn.YMODEM_SIZE_RE.search(tail)
+        self.assertIsNotNone(m)
+        self.assertEqual(int(m.group(1), 16), 2083863)
+        self.assertEqual(pr.CARRIER_BIT.stat().st_size, 2083863)
 
     def test_a_transfer_size_that_differs_from_the_file_is_refused(self):
         """Review item 9: the size U-Boot reports is verified against the file."""

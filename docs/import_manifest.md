@@ -136,6 +136,11 @@ not the stage label, is what it enforces.
 | `evidence/s1s3_17A6_2026-08-29/ymodem.log` |
 | `evidence/s1s3_17A6_2026-08-29/ruling.json` |
 | `evidence/s1s3_17A6_2026-08-29/ruling.json.consumed` |
+| `evidence/s1s3_17A6_2026-08-29-01/reading.md` |
+| `evidence/s1s3_17A6_2026-08-29-01/summary.json` |
+| `evidence/s1s3_17A6_2026-08-29-01/ymodem.log` |
+| `evidence/s1s3_17A6_2026-08-29-01/ruling.json` |
+| `evidence/s1s3_17A6_2026-08-29-01/ruling.json.consumed` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported
