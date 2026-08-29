@@ -67,6 +67,19 @@ are in the isolated target columns, which are **blank in the base by design**
 (`claimb_carrier_design.md`); every non-blank CLB frame belongs to live carrier logic, where
 a LUT change is not a known answer but a perturbation of the instrument itself.
 
+The evidence for "cannot be met" is mechanical, not a preference:
+
+- `zynq-fabricmap`'s certified local map places **all 49** of LUT0's mapped INIT bits in
+  word 51 of frames `0x00400A20‥23` (`tests/test_p1.py` pins the 14 in this frame); those
+  four frames are **all-zero in the base** (`pcap_write_plan.base_frames`, and every
+  Claim B target FAR reads 0 non-zero words in `carrier.bit`).
+- They are blank because `claimb_carrier_design.md` §3 reserves the target columns
+  `CLBLL_L_X2`/`CLBLM_L_X6` for evolvable logic and keeps the carrier's own logic out of
+  them; that isolation is what makes a write there a known answer rather than a change to
+  the instrument.
+- No other LUT-INIT address on this die carries a certificate; an uncertified change is
+  not a known answer.
+
 P1 therefore performs **two** successive writes at the same FAR:
 
 1. **A** (blank → A). A `BLANK` on the reads after it is `PRE_WRITE_CONTENT` *or* a
@@ -103,11 +116,44 @@ deterministic and reversible over three flips on the 4205), minus its CRC-regist
 - **No GRESTORE, GTS, GCAPTURE, SHUTDOWN, START, IPROG, AGHIGH, GHIGH, MFWR.** The guard
   refuses every configuration command except RCRC, WCFG, DESYNC, and every register write
   except CMD, IDCODE, FAR, FDRI.
-- **No CRC-register write.** A CRC write triggers a CRC compare; the carrier's CRC
-  setting is not pinned here, and a CRC error is a device-state event. The engine checks
-  CRC only when the CRC register is written, so omitting it is a *narrower* operation, not
-  a looser one. The terminal JTAG read (§6) is the integrity check that a CRC would have
-  been.
+- **No CRC-register write — warranted by UG470 v1.17, the carrier's own header, and an
+  observable, not by the authors' judgement.**
+  - *When the check happens.* UG470 v1.17, ch. 5, "CRC Register (00000)": *"Writes to this
+    register are used to perform a CRC check against the bitstream data. If the value written
+    matches the current calculated CRC, the CRC_ERROR flag is cleared and startup is allowed."*
+    And the CRC section of the same chapter: *"After the configuration data frames are
+    loaded, the configuration bitstream **can** issue a Check CRC instruction to the device,
+    followed by an expected CRC value. If the CRC value calculated by the device does not
+    match the expected CRC value in the bitstream, the device pulls INIT_B Low and aborts
+    configuration."* The check is an act of the stream (a write to register 00000), not a
+    background property of the engine; a stream that does not write the register is not
+    checked. `RCRC` at the head of the stream resets the running CRC (command table: *"RCRC
+    00111 Resets CRC: Resets the CRC register"*), exactly as every Vivado bitstream — the
+    carrier's included — begins.
+  - *Why not write it.* Writing an **incorrect** expected value is the abort path quoted
+    above ("pulls INIT_B Low and aborts configuration") — a device-state event on the only
+    verification board. Writing the **correct** value would require this line to implement
+    and certify the 7-series bitstream CRC over the exact 231-word stream, which is a new
+    instrument with its own review; `zynq-xpart` sidestepped it by building CRC-disabled
+    bitstreams and writing `CRC ← 0`, a value that is only correct when the check is
+    disabled. Neither is available here without new work, and the check adds nothing the
+    terminal verifier does not establish directly.
+  - *Readback CRC (POST_CRC) is off on this carrier — decoded from the bitstream, checked by
+    a test.* UG470 places POST_CRC enable and `RBCRC_ACTION` in COR1 (Table 5-33) and the
+    precomputed readback CRC in `RBCRC_SW`. The carrier's header (`carrier.bit`, decoded by
+    `tests/test_p1.py::CarrierHeader`) writes **`COR1 = 0x00000000`** and
+    **`RBCRC_SW = 0x00000000`**, so no readback-CRC logic is armed that a partial write
+    without `CRCC` could later trip. (The carrier's full configuration did carry CRC checks —
+    `CRC ← 0x40ddde08` after its FDRI and `CRC ← 0xe3ad7ea5` before `DESYNC` — which is why
+    `CRC_ERROR` is 0 after the setup load.)
+  - *The observable.* UG470 Table 5-29: STAT bit 0 is `CRC_ERROR`. The terminal JTAG probe
+    reads STAT and records it as `config_status`; P1 **requires `CRC_ERROR = 0`** there
+    (`p1_runner.jtag_verdict`). If omitting the CRC write left any CRC-error state, this
+    is where it would show, and a 1 is a stop.
+  - *Residual, stated.* The CRC register holds a running value after the stream that no
+    later reader interprets: every subsequent bitstream begins with `RCRC`, and P1 issues
+    no `START` (the only command whose gating on "a successful CRC check" UG470 mentions).
+    That residual is named here rather than argued away.
 - **No second FDRI, no FAR other than the target, no PL AXI, no ICAP, no CTRL write.**
 
 ### 4c. The DMA
@@ -139,7 +185,7 @@ is a reason the write is the runner's own transaction and not U-Boot's.
 | 4 | **write B** | D_P_DONE, no error bit |
 | 5 | read ×2, expected = B hash, previous = A | both `PASS` |
 | 6 | **seal**: every record and raw buffer written and hashed | — |
-| 7 | **terminal JTAG** (§6) of `0x00400A20` and `0x00400A21` | `0x00400A20` == B hash, `0x00400A21` == pad (blank) |
+| 7 | **terminal JTAG** (§6) of `0x00400A20` and `0x00400A21` | `0x00400A20` == B hash, `0x00400A21` == pad (blank), **STAT `CRC_ERROR` = 0** |
 
 Verdicts on a read are §7's vocabulary plus one: **`PRE_WRITE_CONTENT`** — the frame half
 equals the *previous* pinned content (base at step 3, A at step 5). It is adjudicated after

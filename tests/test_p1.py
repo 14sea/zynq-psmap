@@ -260,6 +260,16 @@ class Chain(unittest.TestCase):
         p.write_text(json.dumps(ruling()))
         self.assertEqual(pr.check_ruling(p, text=p1.RULING_TEXT)["ruling"], p1.RULING_TEXT)
 
+    def test_jtag_verdict_requires_crc_error_clear(self):
+        """p1_spec §4b: omitting the CRC write must leave STAT.CRC_ERROR = 0; unknown is not 0."""
+        frames = {f"{wp.TARGET_FAR:#010x}": {"frame_sha256": p1.B_SHA256},
+                  f"{wp.PAD_FAR:#010x}": {"frame_sha256": p1.PAD_SHA256}}
+        self.assertEqual(p1.jtag_verdict({"verdict": "READ", "frames": frames,
+                                          "config_status": "0x00000001"})["verdict"], "MISMATCH")
+        self.assertEqual(p1.jtag_verdict({"verdict": "READ", "frames": frames})["verdict"], "MISMATCH")
+        self.assertEqual(p1.jtag_verdict({"verdict": "READ", "frames": frames,
+                                          "config_status": "0x00000000"})["verdict"], "PASS")
+
     def test_jtag_verdict_requires_both_frames(self):
         v = p1.jtag_verdict({"verdict": "READ", "frames": {
             f"{wp.TARGET_FAR:#010x}": {"frame_sha256": p1.B_SHA256}}})
@@ -270,6 +280,45 @@ class Chain(unittest.TestCase):
         self.assertIn("JPROGRAM", pj.FORBIDDEN_IR)
         self.assertNotIn("CFG_IN_WRITE", pj.IR)
         self.assertEqual(pj.READ_WORDS, 202)
+
+
+class CarrierHeader(unittest.TestCase):
+    """p1_spec §4b: readback CRC is off on this carrier — decoded from the bitstream."""
+
+    REG = {0: "CRC", 1: "FAR", 4: "CMD", 9: "COR0", 12: "IDCODE", 14: "COR1", 19: "RBCRC_SW"}
+
+    def header_writes(self):
+        import bitstream_frames as bf
+        words, _ = bf.config_words(pr.CARRIER_BIT)
+        out, i = {}, 0
+        while i < len(words):
+            w = words[i]
+            if w in (0x20000000, 0xFFFFFFFF, 0xAA995566):
+                i += 1
+                continue
+            if (w >> 29) == 1 and ((w >> 27) & 3) == 2:
+                reg, cnt = (w >> 13) & 0x3FFF, w & 0x7FF
+                if reg == 2:                       # FDRI: the header is over
+                    break
+                if cnt == 1:
+                    out.setdefault(self.REG.get(reg, reg), []).append(words[i + 1])
+                i += 1 + cnt
+            else:
+                i += 1
+        return out
+
+    def test_cor1_and_rbcrc_sw_are_zero(self):
+        h = self.header_writes()
+        self.assertEqual(h["COR1"], [0])
+        self.assertEqual(h["RBCRC_SW"], [0])
+        self.assertEqual(h["IDCODE"], [wp.IDCODE_XC7Z010])
+        self.assertIn(wp.CMD_RCRC, h["CMD"])
+
+    def test_lut0_bits_in_this_frame_are_the_pinned_mask(self):
+        """The 14 positions from the certified map, restated as data the test can check."""
+        positions = {15, 14, 13, 12, 11, 10, 9, 8, 7, 4, 3, 2, 1, 0}
+        self.assertEqual(sum(1 << b for b in positions), wp.INIT_MASK)
+        self.assertEqual(bin(wp.INIT_MASK).count("1"), 14)
 
 
 if __name__ == "__main__":

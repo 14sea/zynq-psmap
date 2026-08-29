@@ -39,6 +39,7 @@ TARGET_FAR = wp.TARGET_FAR
 PAD_FAR = wp.PAD_FAR
 
 PRE_WRITE_CONTENT = "PRE_WRITE_CONTENT"
+STAT_CRC_ERROR = 1 << 0            # UG470 v1.17 Table 5-29: STAT bit 0
 JTAG_PROBE = REPO_ROOT / "scripts/probe_jtag_config_read.py"
 JTAG_CFG = REPO_ROOT / "scripts/jtag_config_only.cfg"
 
@@ -175,10 +176,13 @@ def jtag_verdict(record: dict) -> dict:
     got_t = frames.get(f"{TARGET_FAR:#010x}", {}).get("frame_sha256")
     got_p = frames.get(f"{PAD_FAR:#010x}", {}).get("frame_sha256")
     ok_t, ok_p = got_t == B_SHA256, got_p == PAD_SHA256
-    return {"verdict": "PASS" if (ok_t and ok_p) else "MISMATCH",
+    status = record.get("config_status")
+    crc_error = None if status is None else bool(int(status, 16) & STAT_CRC_ERROR)
+    ok_crc = crc_error is False           # unknown is not "no error"
+    return {"verdict": "PASS" if (ok_t and ok_p and ok_crc) else "MISMATCH",
             "target_sha256": got_t, "target_matches_B": ok_t,
             "pad_sha256": got_p, "pad_matches_base": ok_p,
-            "config_status": record.get("config_status")}
+            "config_status": status, "crc_error": crc_error}
 
 
 # ------------------------------------------------------------------ the chain
