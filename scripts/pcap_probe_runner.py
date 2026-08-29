@@ -165,17 +165,19 @@ def adjudicate(words: list[int], sentinel: int, expected_sha256: str,
 # ------------------------------------------------------------------ ruling (§2)
 
 
-def check_ruling(path: Path) -> dict:
-    """A whole-of-probe ruling is a file with fixed fields; consumed once, never reused."""
+def check_ruling(path: Path, text: str = RULING_TEXT) -> dict:
+    """A whole-of-probe ruling is a file with fixed fields; consumed once, never reused.
+    `text` is the ruling this runner needs: an S1–S3 ruling does not authorise P1 and
+    vice versa."""
     consumed = path.with_name(path.name + ".consumed")
     if consumed.exists():
         raise bsn.SessionRefusal(f"the ruling {path} was consumed ({consumed.read_text().strip()})")
-    ruling = _parse_ruling(path)
+    ruling = _parse_ruling(path, text)
     ruling["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     return ruling
 
 
-def _parse_ruling(path: Path) -> dict:
+def _parse_ruling(path: Path, text: str = RULING_TEXT) -> dict:
     try:
         ruling = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
@@ -183,8 +185,8 @@ def _parse_ruling(path: Path) -> dict:
     missing = [f for f in RULING_REQUIRED_FIELDS if not ruling.get(f)]
     if missing:
         raise bsn.SessionRefusal(f"ruling lacks {missing}")
-    if ruling["ruling"] != RULING_TEXT:
-        raise bsn.SessionRefusal(f"ruling text {ruling['ruling']!r} != {RULING_TEXT!r}")
+    if ruling["ruling"] != text:
+        raise bsn.SessionRefusal(f"ruling text {ruling['ruling']!r} != {text!r}")
     if ruling["boardid"] != bsn.REQUIRED_BOARDID:
         raise bsn.SessionRefusal(f"ruling names board {ruling['boardid']!r}")
     return ruling

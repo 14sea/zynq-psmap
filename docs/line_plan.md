@@ -262,6 +262,14 @@ not been touched.
 **Dated note, 2026-08-29 (evening):** S1–S3 **PASS** on `17A6` under ruling `2026-08-29-02`,
 run #3 (`docs/s1s3_findings.md`). P0 is PASS. P1 and P2 each still need their own ruling.
 
+**Dated note, 2026-08-29 (night):** P1's host-only deliverables exist — `docs/p1_spec.md`,
+`scripts/pcap_write_plan.py`, `scripts/p1_runner.py`, `tests/test_p1.py`. The spec
+**amends** this plan's P1 in one respect (its §3): two successive writes A→B at one
+certified blank-in-base frame replace the single write into a non-blank base frame, because
+the only certified content-bit addresses on this carrier are blank in the base by design.
+The write path is PCAP itself (`XDcfg_Transfer` shape, `DestWordLength = 0`), not the
+carrier's ICAP; JTAG stays terminal. Not reviewed; no ruling requested.
+
 **Dated note, 2026-08-29 (later the same day):** S0b was written (`4e2c032`) and
 cross-reviewed (`bde1d07`); the D2 third-party review was performed by an LLM (Gemini 3.1
 Pro) per the owner's ruling that the third party may be an LLM, and passed at `7a5b990`

@@ -37,6 +37,9 @@ is itself provenance — it names the gate run that produced this carrier.
 | `gate_runs/claimb_round1_carrier_2026_08_13_erratum006/carrier.bit` | `8c3369e8e4755da5aceeb7844690d5e132b2e65647004c0a46c0e868e34f0b8a` | 2083863 |
 | `LICENSE` | `75efa07c4d2afb14d8226cf00b7763dd2ec1c5585a9dfe919881a3a3fef2ddac` | 11357 |
 | `data/prjxray/LICENSE` | `a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499` | 7048 |
+| `scripts/frame_ecc.py` | `e595c8e0467fd46de90d6f526792cedf09a4eafa1599b2c2c04a3bbcbb78a646` | 6441 |
+| `scripts/probe_jtag_config_read.py` | `c3e79a0856ccc821ca35f6a2daa637258075f92b573cf6247d9b745dac1f1122` | 18877 |
+| `scripts/jtag_config_only.cfg` | `06e542043996643358e5606d226d9585b1c239325b54e6afb4856d2c6a1b99fa` | 1148 |
 
 `tests/test_import_manifest.py` re-hashes every file listed above against this table, so
 the manifest is a machine-checked claim and not a comment.
@@ -79,6 +82,16 @@ column layout in FAR order, `tilegrid.json` for the containment cross-check. Wit
 the target derivation cannot run at all, so importing the script without them would have
 produced exactly the failure this manifest exists to prevent: pinned constants carried
 across with no way to re-derive them.
+
+
+**Second import, 2026-08-29, for P1** (`docs/p1_spec.md`): the three rows above ending in
+`frame_ecc.py`, `probe_jtag_config_read.py` and `jtag_config_only.cfg` were copied
+byte-for-byte from `zynq-fabricmap` at commit
+`71666b02d526a6f2c641f1e0aebc15dac0417d4f` (not the frozen source commit of the first
+import). `frame_ecc.py` is the Vivado-validated prjxray ECC port the write frame needs;
+the probe and its OpenOCD config are the R4 JTAG instrument that serves as P1's terminal
+verifier. None of them is an authority module; the boundary in
+[`authority_requirements.md`](authority_requirements.md) is unchanged.
 
 ## Re-derivation, performed in this repository
 
@@ -159,6 +172,10 @@ not the stage label, is what it enforces.
 | `evidence/s1s3_17A6_2026-08-29-02/ruling.json` |
 | `evidence/s1s3_17A6_2026-08-29-02/ruling.json.consumed` |
 | `docs/s1s3_findings.md` |
+| `scripts/pcap_write_plan.py` |
+| `scripts/p1_runner.py` |
+| `docs/p1_spec.md` |
+| `tests/test_p1.py` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported
