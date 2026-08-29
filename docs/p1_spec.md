@@ -33,7 +33,8 @@ It is not Claim B, and it is not non-perturbation (P2).
   (`0x4e00e07f`) and PCAP owns the engine throughout — there is no ICAP in P1 and no
   `PCAP_PR` toggling. `PCAP_RATE_EN` (bit 25) stays as found; AMD's non-secure write path
   clears it for speed, and P1 does not, so the write runs at whatever rate the board is in.
-  Recorded, not adjusted.
+  Recorded before and after the write, and **asserted unchanged** (a difference is a
+  non-discriminating stop) — added 2026-08-29 after the provisional review's one valid point.
 - **Ruling model (§2):** one ruling for the whole P1 chain, claimed atomically before the
   port opens, consumed by PASS, stop, refusal or crash. No retry inside a run (§7.4).
 - **Stop-loss (`stop_loss.md`):** a P1 failure ends the line's P1 leg; a scoped negative is

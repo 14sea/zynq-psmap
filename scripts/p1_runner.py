@@ -95,7 +95,18 @@ def execute_write_plan(capability, session: bsn.BoardSession, plan: dict,
             if name == "dma-write" and start == pp.REG["DMA_DEST_LEN"]:
                 queued_at = time.monotonic()
             continue
-        if name == "clear-verify-write":
+        if name == "ctrl-before":
+            obs["ctrl_before"] = f"{send.words(cmd, start, 1)[0]:#010x}"
+            if int(obs["ctrl_before"], 16) & pp.CTRL_MASK != pp.CTRL_REQUIRED:
+                raise pr._stop(stage, pr.PRECONDITION,
+                               f"CTRL {obs['ctrl_before']} fails the masked gate before the write")
+        elif name == "ctrl-after":
+            obs["ctrl_after"] = f"{send.words(cmd, start, 1)[0]:#010x}"
+            if obs["ctrl_after"] != obs["ctrl_before"]:
+                raise pr._stop(stage, pr.PRECONDITION,
+                               f"CTRL changed across the write: {obs['ctrl_before']} -> "
+                               f"{obs['ctrl_after']} (PCAP_RATE_EN or another bit moved)")
+        elif name == "clear-verify-write":
             v = send.words(cmd, start, 1)[0]
             obs["int_sts_after_clear"] = f"{v:#010x}"
             if v & clear_mask:

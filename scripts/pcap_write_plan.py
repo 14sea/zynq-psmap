@@ -218,7 +218,10 @@ def build_write_plan(pattern_name: str, base: dict[int, list[int]] | None = None
     stream = write_stream(TARGET_FAR, frame, base[PAD_FAR])
     validate_write_stream(stream, base)
 
-    script: list[dict] = []
+    script: list[dict] = [
+        {"step": "ctrl-before", "cmd": f"md.l {pp.REG['CTRL']:#010x} 1",
+         "why": "CTRL (incl. PCAP_RATE_EN bit 25) is recorded before the write and must be "
+                "unchanged after it; §5e: read, never written", "addresses": [pp.REG["CTRL"]]}]
     for i, word in enumerate(stream):
         script.append({"step": "stream-word", "cmd": f"mw.l {WR_BUF + 4 * i:#010x} {word:#010x} 1",
                        "why": f"write stream word {i}", "addresses": [WR_BUF + 4 * i]})
@@ -237,6 +240,9 @@ def build_write_plan(pattern_name: str, base: dict[int, list[int]] | None = None
     script.append({"step": "wait-write", "cmd": f"md.l {pp.REG['INT_STS']:#010x} 1",
                    "why": f"completion is D_P_DONE {pp.INT_STS_D_P_DONE:#x}; errors {pp.INT_STS_ERROR_MASK:#010x}",
                    "addresses": [pp.REG["INT_STS"]]})
+    script.append({"step": "ctrl-after", "cmd": f"md.l {pp.REG['CTRL']:#010x} 1",
+                   "why": "must equal ctrl-before, or STOP (non-discriminating)",
+                   "addresses": [pp.REG["CTRL"]]})
     plan = {
         "schema": "zynq-psmap/pcap_write_plan/1",
         "board_action": "NONE - this is a plan, not an execution",
@@ -294,6 +300,8 @@ def check_write_plan(plan: dict, base: dict[int, list[int]] | None = None) -> No
         elif form == "md.l":
             if start == pp.REG["INT_STS"] and span == 4:
                 tokens.append("READ_INT_STS")
+            elif start == pp.REG["CTRL"] and span == 4:
+                tokens.append("READ_CTRL")
             else:
                 raise ValueError(f"unscheduled read {step['cmd']!r}")
         else:
@@ -304,8 +312,8 @@ def check_write_plan(plan: dict, base: dict[int, list[int]] | None = None) -> No
     validate_write_stream(words, base)
     if tuple(dma) != LEGAL_WRITE_TRANSACTION:
         raise ValueError(f"DMA tuple {dma} is not the pinned write transaction")
-    expected = [("STREAM", STREAM_WORDS), "CLEAR", "READ_INT_STS", "DMA_SRC_ADDR",
-                "DMA_DEST_ADDR", "DMA_SRC_LEN", "DMA_DEST_LEN", "READ_INT_STS"]
+    expected = ["READ_CTRL", ("STREAM", STREAM_WORDS), "CLEAR", "READ_INT_STS", "DMA_SRC_ADDR",
+                "DMA_DEST_ADDR", "DMA_SRC_LEN", "DMA_DEST_LEN", "READ_INT_STS", "READ_CTRL"]
     if tokens != expected:
         raise ValueError(f"schedule {tokens} is not the pinned write schedule")
     if words != plan["stream"] or plan["frame_after"] != words[FDRI_DATA_OFFSET:FDRI_DATA_OFFSET + FRAME_WORDS]:

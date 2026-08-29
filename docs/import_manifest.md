@@ -176,6 +176,7 @@ not the stage label, is what it enforces.
 | `scripts/p1_runner.py` |
 | `docs/p1_spec.md` |
 | `tests/test_p1.py` |
+| `docs/p1_review_result.md` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

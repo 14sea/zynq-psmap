@@ -160,6 +160,26 @@ class WritePlanGuards(unittest.TestCase):
             p1.execute_write_plan(bsn.CONFIG_READ_CAPABILITY, s, plan, BASE, "w")
         self.assertEqual(len(board.sent), n)
 
+    def test_ctrl_is_recorded_before_and_after_the_write_and_must_not_change(self):
+        """p1_spec §1: CTRL incl. PCAP_RATE_EN stays as found; asserted, not assumed."""
+        summary, out, _ = run_chain(P1Fake())
+        rec = json.loads((out / "P1_1_write_A.json").read_text())
+        self.assertEqual(rec["observations"]["ctrl_before"], "0x4e00e07f")
+        self.assertEqual(rec["observations"]["ctrl_after"], "0x4e00e07f")
+        board = P1Fake()
+        real = board.reply
+
+        def flip_rate_en(line):
+            out_ = real(line)
+            # only once the FIRST write DMA has been queued (reads also queue DMAs)
+            if board.writes == 1 and line.startswith(f"mw.l {pp.REG['DMA_DEST_LEN']:#010x}"):
+                board.mem[pp.REG["CTRL"]] &= ~(1 << 25)      # something cleared PCAP_RATE_EN
+            return out_
+        board.reply = flip_rate_en
+        summary, _, _ = run_chain(board)
+        self.assertTrue(summary["outcome"].startswith("STOP PRECONDITION"), summary["outcome"])
+        self.assertIn("CTRL changed", summary["outcome"])
+
     def test_the_write_clear_excludes_pcfg_done(self):
         plan = wp.build_write_plan("A", BASE)
         clears = [st["cmd"] for st in plan["uboot_script"] if st["step"] == "clear-write"]
