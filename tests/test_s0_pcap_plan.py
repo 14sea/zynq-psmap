@@ -1861,14 +1861,29 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         renormalising them, or ignoring the call entirely -- fails this regardless of what
         it normalises, because none of them consumes the value.
         """
-        case = type(self)("test_every_document_carries_the_canonical_table")
-        with unittest.mock.patch.object(
-                P_TESTMOD, "status_problems_from_path",
-                lambda _path: ["injected: the helper reported a problem"]):
-            with self.assertRaises(AssertionError) as caught:
-                case.test_every_document_carries_the_canonical_table()
-        self.assertIn("injected", str(caught.exception),
-                      "the assertion did not compare the helper's own verdict")
+        docs = type(self).__dict__["DOCS"]
+        expected_names = ("README.md", "pcap_probe_spec.md",
+                          "s0_derived_sequence.md")
+        self.assertEqual(tuple(docs), expected_names,
+                         "the injected-verdict targets have changed")
+        checked: list[str] = []
+        for target_name, target_path in docs.items():
+            reason = f"injected for {target_name}: the helper reported a problem"
+
+            def _verdict(path, *, _target=target_path, _reason=reason):
+                return [_reason] if path == _target else []
+
+            case = type(self)("test_every_document_carries_the_canonical_table")
+            with self.subTest(target=target_name):
+                with unittest.mock.patch.object(
+                        P_TESTMOD, "status_problems_from_path", _verdict):
+                    with self.assertRaises(AssertionError) as caught:
+                        case.test_every_document_carries_the_canonical_table()
+                self.assertIn(reason, str(caught.exception),
+                              "the assertion did not compare this helper verdict")
+            checked.append(target_name)
+        self.assertEqual(checked, list(expected_names),
+                         "not every document received an injected verdict")
 
     def test_the_document_test_never_reads_text(self):
         """Any newline-translating read fails, alias or not: the attribute is patched."""
