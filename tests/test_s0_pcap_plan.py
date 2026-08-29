@@ -1346,9 +1346,10 @@ def _norm(cell: str) -> str:
 _MD = MarkdownIt("commonmark").enable("table")   # commonmark + GFM tables, no linkify
 
 
-def top_level_tables(text: str) -> list[list[list[str]]]:
-    """Every table at document top level, as rows of normalised cells."""
-    tables: list[tuple[int, list[list[str]]]] = []
+def top_level_tables(
+        text: str) -> list[tuple[list[list[str]], tuple[int, int]]]:
+    """Every top-level table, paired with its exact source-line span."""
+    tables: list[tuple[int, list[list[str]], tuple[int, int] | None]] = []
     current: list[list[str]] | None = None
     depth = 0
     for tok in _MD.parse(text):
@@ -1359,22 +1360,34 @@ def top_level_tables(text: str) -> list[list[list[str]]]:
             depth -= 1
         elif tok.type == "table_open":
             current = []
-            tables.append((depth, current))
+            span = (tok.map[0], tok.map[1]) if tok.map is not None else None
+            tables.append((depth, current, span))
         elif tok.type == "table_close":
             current = None
         elif tok.type == "tr_open" and current is not None:
             current.append([])
         elif tok.type == "inline" and current is not None and current:
             current[-1].append(_norm(tok.content))
-    return [rows for d, rows in tables if d == 0]
+    # A table without a source map cannot be tied back to the artefact being checked.
+    # Excluding it makes the later uniqueness check fail closed.
+    return [(rows, span) for d, rows, span in tables if d == 0 and span is not None]
+
+
+def status_table_artifact(
+        text: str) -> tuple[list[tuple[str, ...]], tuple[int, int]] | None:
+    """The one top-level gate table and the source span that produced those rows."""
+    keyed = [(rows, span) for rows, span in top_level_tables(text)
+             if rows and rows[0] and rows[0][0] == "gate"]
+    if len(keyed) != 1:
+        return None
+    rows, span = keyed[0]
+    return [tuple(row) for row in rows], span
 
 
 def status_table(text: str) -> list[tuple[str, ...]] | None:
     """The one top-level table keyed `gate`, or None if there is not exactly one."""
-    keyed = [t for t in top_level_tables(text) if t and t[0] and t[0][0] == "gate"]
-    if len(keyed) != 1:
-        return None
-    return [tuple(row) for row in keyed[0]]
+    artifact = status_table_artifact(text)
+    return artifact[0] if artifact is not None else None
 
 
 CANONICAL_SOURCE_BLOCK = (
@@ -1397,14 +1410,26 @@ def status_problems(text: str) -> list[str]:
     something else.
     """
     problems: list[str] = []
-    literal = text.count(CANONICAL_SOURCE_BLOCK)
-    if literal != 1:
-        problems.append(
-            f"the canonical source block appears {literal} times, expected once")
-    table = status_table(text)
-    if table is None:
+    artifact = status_table_artifact(text)
+    if artifact is None:
         problems.append("no single top-level GFM table keyed `gate` was found")
         return problems
+    table, (start, end) = artifact
+    # Bind the literal check to the SAME parsed table.  A whole-document count allowed a
+    # malformed top-level table to satisfy the parser while a canonical decoy inside a
+    # fence satisfied the literal check.
+    source = "".join(text.splitlines(keepends=True)[start:end])
+    if source != CANONICAL_SOURCE_BLOCK:
+        expected_lines = CANONICAL_SOURCE_BLOCK.splitlines()
+        actual_lines = source.splitlines()
+        problems += [
+            f"source row {i}: expected "
+            f"{expected_lines[i] if i < len(expected_lines) else None!r}, found "
+            f"{actual_lines[i] if i < len(actual_lines) else None!r}"
+            for i in range(max(len(expected_lines), len(actual_lines)))
+            if (expected_lines[i] if i < len(expected_lines) else None)
+            != (actual_lines[i] if i < len(actual_lines) else None)
+        ]
     want = [tuple(r) for r in CANONICAL_STATUS_TABLE]
     # Both checks are reported, never short-circuited: the row-level diff is the useful
     # diagnostic and a literal mismatch must not hide it.
@@ -1546,12 +1571,12 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         self.assertIn("no single top-level", " ".join(problems))
 
     def test_the_parser_dependency_is_declared(self):
-        """The guard hard-depends on it; an undeclared dependency is a broken guard."""
+        """The token schema and source-map behaviour are part of this guard's contract."""
         req = (REPO_ROOT / "requirements.txt").read_text()
         lines = [l.strip() for l in req.splitlines()
                  if l.strip() and not l.strip().startswith("#")]
-        self.assertTrue(any(l.startswith("markdown-it-py") for l in lines),
-                        f"markdown-it-py is not declared; requirements list {lines}")
+        self.assertIn("markdown-it-py==3.0.0", lines,
+                      f"markdown-it-py 3.0.0 is not pinned; requirements list {lines}")
 
     def test_no_status_table_is_refused(self):
         self.assertTrue(status_problems("no tables here"))
@@ -1590,8 +1615,28 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
 
     def test_a_real_table_plus_a_fenced_decoy_still_passes(self):
         """Discriminating power: a fenced example must not break the real table."""
-        self.assertEqual(status_problems(self.GOOD + "\n```text\n| gate | state |\n```\n"),
-                         [])
+        text = self.GOOD + "\n```text\n" + self.GOOD + "```\n"
+        self.assertEqual(status_problems(text), [])
+
+    def test_literal_and_parser_must_describe_the_same_table(self):
+        """A fenced literal may not vouch for a different malformed top-level table.
+
+        GFM drops a third body cell because the header declares two columns.  The parsed
+        top-level table therefore looks canonical.  A whole-document literal count was
+        independently satisfied by the canonical block in the fence, so both checks passed
+        while neither described the same artefact.
+        """
+        malformed = self.GOOD.replace(
+            "| **S0** | **NOT complete** |",
+            "| **S0** | **NOT complete** | actually done |")
+        bad = malformed + "\n~~~text\n" + self.GOOD + "~~~\n"
+        self.assertEqual(bad.count(CANONICAL_SOURCE_BLOCK), 1,
+                         "the fenced decoy must isolate the old whole-document count hole")
+        self.assertEqual(status_table(bad), [tuple(r) for r in CANONICAL_STATUS_TABLE],
+                         "GFM truncation must keep the parsed rows canonical")
+        problems = status_problems(bad)
+        self.assertTrue(problems, "parser and literal evidence came from different tables")
+        self.assertIn("source row 5", " ".join(problems))
 
     def test_the_parser_is_a_gfm_parser_not_a_line_scanner(self):
         """AST again: a substring ban matches its own assertion (second time)."""

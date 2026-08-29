@@ -5,5 +5,6 @@ PyYAML>=6.0
 # markdown-it-py parses the gate-status table in tests/test_s0_pcap_plan.py.  A
 # hand-rolled scanner was broken twice by valid Markdown the canonical rows never
 # touched -- a body row with the outer pipes omitted, and the whole table wrapped in a
-# fence -- so block context is delegated to a parser rather than re-derived.
-markdown-it-py>=3.0
+# fence -- so block context is delegated to a parser rather than re-derived.  The exact
+# version is pinned because its token source maps are part of the guard's contract.
+markdown-it-py==3.0.0
