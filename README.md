@@ -5,13 +5,13 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a passed at `8cb544b`; §8a technically resolved, not independently reviewed
+## Status — S0a passed at `8cb544b`; §8a technically resolved, not independently reviewed; S0b written, not reviewed
 
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
 | **§8a** | **technically resolved; independently reviewed: NO** |
-| **S0b** | **not started** |
+| **S0b** | **written at 4e2c032; reviewed: NO** |
 | **S0** | **NOT complete** |
 
 | | |
@@ -24,13 +24,18 @@ A host-only question, asked separately from the repository it came out of:
 | S1–S3 (on silicon) | **not authorised** |
 | tests | see the command below |
 
-Nothing in this repository performs a board action. There is no runner, and
+Nothing in this repository performs a board action without a whole-of-probe ruling.
+The runner (`scripts/pcap_probe_runner.py`, written at `4e2c032`) refuses to open a port
+unless a ruling file naming board `17A6` exists, and it consumes that ruling on any stop;
 `tests/test_s0_pcap_plan.py` asserts by AST that the planner imports nothing that could
-open one. The imported specification describes stages that have not been authorised.
+open a port. The imported specification describes stages that have not been authorised,
+and no ruling has been issued.
 
 **S0 is not complete and this repository does not claim it is.** The specification's S0
 includes writing the runner and the single `BoardSession` that carries one identity and one
-epoch across loader and runner; those are S0b and they are not started. The split is
+epoch across loader and runner; those are S0b, written at `4e2c032` under the host-only
+authorisation in [`docs/line_plan.md`](docs/line_plan.md) §6 D4 and **not yet reviewed by a
+non-author**. The split is
 recorded in [`docs/pcap_probe_spec.md`](docs/pcap_probe_spec.md) §2a, in the governing
 document rather than in a status line.
 

@@ -565,8 +565,9 @@ it is a derivation, not a discharge, and it stands or falls with 8a.
 
 **The governing specification's S0 has four deliverables**: discharge §2b, derive and pin
 §2c, **write the runner and its tests**, and reproduce the §4 target selection. Three are
-done. **The runner is not written**, and neither is the single `BoardSession` carrying one
-identity and one epoch across loader and runner (§5a step 3, §5d.1).
+done. **The runner is written at `4e2c032`** (`scripts/pcap_probe_runner.py`), together
+with the single `BoardSession` carrying one identity and one epoch across loader and runner
+(§5a step 3, §5d.1; `scripts/board_session.py`) — **not yet reviewed by a non-author**.
 
 An earlier version of this document deferred those "to the board-authorised work" while the
 rest of the repository described this stage as finished. That was a contradiction with the
@@ -577,7 +578,7 @@ honestly:
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
 | **§8a** | **technically resolved; independently reviewed: NO** |
-| **S0b** | **not started** |
+| **S0b** | **written at 4e2c032; reviewed: NO** |
 | **S0** | **NOT complete** |
 
 | | |
