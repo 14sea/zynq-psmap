@@ -276,6 +276,14 @@ gates accepted); owner ruling `whole-of-probe P1` issued; **P1 PASS on `17A6`, r
 terminal JTAG confirms B and `STAT.CRC_ERROR = 0`. Scope as ruled: `17A6`, U-Boot, this
 content-bit path. P2 next needs its own ruling; P3 is a new repository.
 
+**Dated note, 2026-08-29 (night, after P1):** P2's host-only deliverables exist —
+`docs/p2_spec.md`, `scripts/p2_observe.py`, `scripts/p2_runner.py`, `tests/test_p2.py`.
+Observable = the carrier's eight readable AXI words (STATUS, FAULT, SCORE0‥5), stable-state
+class, rule = exact equality with the run's baseline after every PCAP step, with a no-read
+control **before** the reads (HOLD if it drifts) and one P1 write as a separable last arm.
+The counter-class form (a computing design with a heartbeat — autoehw's M1 shell) is
+named as P2b, a separate spec. Not reviewed; no ruling requested.
+
 **Dated note, 2026-08-29 (later the same day):** S0b was written (`4e2c032`) and
 cross-reviewed (`bde1d07`); the D2 third-party review was performed by an LLM (Gemini 3.1
 Pro) per the owner's ruling that the third party may be an LLM, and passed at `7a5b990`

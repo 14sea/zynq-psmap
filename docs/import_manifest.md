@@ -192,6 +192,10 @@ not the stage label, is what it enforces.
 | `evidence/p1_17A6_2026-08-29-01/ruling.json` |
 | `evidence/p1_17A6_2026-08-29-01/ruling.json.consumed` |
 | `docs/p1_findings.md` |
+| `docs/p2_spec.md` |
+| `scripts/p2_observe.py` |
+| `scripts/p2_runner.py` |
+| `tests/test_p2.py` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported
