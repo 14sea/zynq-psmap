@@ -546,7 +546,25 @@ cannot fail silently.** A wrong pin could equally produce a timeout, a `NO_MATCH
 outcome except a bit-exact match halts the probe.
 
 **The alternative is retained, not deleted**, and it is the first thing a **new run** — never
-a retry inside one (§7.4) — should vary. It may be adopted after **any** stop, not only after
+a retry inside one (§7.4) — should vary.
+
+**The mechanism hypothesis the alternative exists for — named, not merely implied (added
+2026-08-29 after the D2 third-party review).** Call it **H-FIFO**: *readback words may
+begin entering the 31-word RxFIFO as soon as the command stream has been delivered, before
+the second (PCAP→DDR) DMA has been queued; if so, the two-unidirectional order overflows
+the FIFO on any readback longer than 31 words, and the first run stops `OVERFLOW` (or
+`TIMEOUT`) for an instrument reason.* **No source establishes H-FIFO**: UG585's own
+readback text requires two accesses in this order, AMD's readback driver issues them in
+this order, and C2's "cannot be split" constrains the read access's length (202 requested,
+202 transferred — satisfied), not the number of accesses. Nor does any source refute it —
+whether the PL pushes readback data before the read DMA drives the PCAP interface is not
+stated anywhere the authors have found. It is therefore an **open hypothesis**, and it is
+exactly what the pre-registered alternative discriminates: an `OVERFLOW` on a
+two-unidirectional run is consistent with H-FIFO, and a **new run** under one-bidirectional
+(both endpoints programmed before any wait) is the test. A first-run `OVERFLOW` is thus
+*interpretable* — as the trigger for that second run — and is not a silent instrument
+artefact. Re-pinning to one-bidirectional now, on the strength of H-FIFO alone, would
+reverse a driver-backed reading on an uncited mechanism, which is the move §8a refuses. It may be adopted after **any** stop, not only after
 a particular error bit; tying it to one bit would smuggle the withdrawn causal claim back in
 through the procedure. Its standing is lower than when §8a was opened, because the vendor's
 readback API does not use it — which is weaker than the silicon refusing it, and is stated
