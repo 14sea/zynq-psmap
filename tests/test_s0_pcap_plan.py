@@ -1733,6 +1733,80 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
                     self.assertTrue(problems, f"real {name} document was accepted")
                     self.assertIn("outside the line text", " ".join(problems))
 
+    def test_the_documents_are_read_without_newline_translation(self):
+        """Structural: the status tests may not touch a document through `read_text()`.
+
+        `dab0d5b` converted the two call sites that read the repository documents, and
+        nothing then held them there -- reverting either one to `read_text()` broke no
+        test, because the terminator regressions all drive the helper on a temp file
+        rather than the call site. Universal-newline translation is invisible at the
+        assertion, so it is refused at the AST instead.
+        """
+        tree = ast.parse(Path(__file__).read_text())
+        cls = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.ClassDef)
+                   and n.name == "TheGateStatusIsPinnedAcrossEveryDocument")
+        # Scoped to the methods that consume the repository documents.  A first version
+        # flagged every read_text() in the class, including the AST tests that read this
+        # file and requirements.txt -- where universal newlines are correct, not a bug.
+        # `self.DOCS` as an attribute access, not the string "DOCS" anywhere in the
+        # method -- the first scoped version matched its own literal and flagged itself,
+        # which is the third time a guard in this file has done that.
+        def reads_docs(fn) -> bool:
+            return any(isinstance(n, ast.Attribute) and n.attr == "DOCS"
+                       for n in ast.walk(fn))
+
+        consumers = [fn for fn in cls.body
+                     if isinstance(fn, ast.FunctionDef) and reads_docs(fn)]
+        # Named, not merely non-empty: emptying the list would otherwise disarm the
+        # check below by leaving it nothing to inspect.
+        self.assertEqual(
+            sorted(fn.name for fn in consumers),
+            ["test_every_document_carries_the_canonical_table",
+             "test_the_three_documents_agree_with_each_other"],
+            "the set of methods reading the repository documents has changed")
+        offenders = sorted({
+            f"{fn.name}:{node.lineno}"
+            for fn in consumers for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("read_text", "write_text")
+        })
+        self.assertEqual(offenders, [],
+                         f"newline-translating I/O on the documents: {offenders}")
+
+    def test_the_ingress_regression_writes_bytes(self):
+        """`write_text` translates newlines on some platforms; the fixture must not."""
+        tree = ast.parse(Path(__file__).read_text())
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef)
+                  and n.name == "test_real_document_ingress_preserves_terminator_differences")
+        attrs = {n.func.attr for n in ast.walk(fn)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        self.assertIn("write_bytes", attrs)
+        self.assertNotIn("write_text", attrs)
+
+    def test_the_document_entry_point_reads_bytes(self):
+        tree = ast.parse(Path(__file__).read_text())
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef)
+                  and n.name == "status_problems_from_path")
+        attrs = {n.func.attr for n in ast.walk(fn)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        self.assertIn("read_bytes", attrs)
+        self.assertNotIn("read_text", attrs)
+
+    def test_the_repository_documents_go_through_that_entry_point(self):
+        """Not merely "no read_text": the byte-preserving helper must be what is used."""
+        tree = ast.parse(Path(__file__).read_text())
+        cls = next(n for n in ast.walk(tree)
+                   if isinstance(n, ast.ClassDef)
+                   and n.name == "TheGateStatusIsPinnedAcrossEveryDocument")
+        fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "test_every_document_carries_the_canonical_table")
+        called = {n.func.id for n in ast.walk(fn)
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        self.assertIn("status_problems_from_path", called)
+
     def test_the_difference_branch_cannot_report_nothing(self):
         """Structural: no path through the branch may leave `problems` unchanged."""
         tree = ast.parse(Path(__file__).read_text())
