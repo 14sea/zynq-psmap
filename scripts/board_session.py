@@ -40,6 +40,8 @@ and this module owns *who may send it*.
 from __future__ import annotations
 
 import base64
+import contextlib
+import fcntl
 import hashlib
 import os
 import re
@@ -154,6 +156,25 @@ def parse_md(reply: bytes, addr: int, count: int) -> list[int]:
 # ---------------------------------------------------------------------- transports
 
 
+@contextlib.contextmanager
+def blocking_fd(fd: int):
+    """Clear O_NONBLOCK on `fd` for the duration, restore it after.
+
+    pyserial opens the port O_NONBLOCK and never clears it (its "set blocking" line is
+    commented out upstream). `sb` handed that descriptor gets EAGAIN on its reads and
+    writes and reports "Timeout on pathname" — which is exactly what the first board run
+    under ruling 2026-08-29 produced, after precheck, identity and READY had all passed.
+    The flag lives on the open file description, so this changes nothing about WHICH
+    port is spoken to: same handle, same session, same epoch (§5d.1).
+    """
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    try:
+        yield fd
+    finally:
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+
+
 class SerialTransport:
     """Owns one open serial handle for the whole session; resolved once, never reopened."""
 
@@ -208,7 +229,7 @@ class SerialTransport:
     def ymodem_send(self, path: Path, log: Path, timeout: float) -> None:
         """`sb -k` over THIS handle's descriptor. The port is not closed or reopened."""
         fd = self._serial.fileno()
-        with open(log, "wb") as logf:
+        with open(log, "wb") as logf, blocking_fd(fd):
             try:
                 rc = subprocess.run(["sb", "-k", str(path)], stdin=fd, stdout=fd,
                                     stderr=logf, check=False, timeout=timeout)

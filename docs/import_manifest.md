@@ -131,6 +131,11 @@ not the stage label, is what it enforces.
 | `tests/test_s0b_runner.py` |
 | `docs/d2_review_package.md` |
 | `docs/d2_review_result.md` |
+| `evidence/s1s3_17A6_2026-08-29/reading.md` |
+| `evidence/s1s3_17A6_2026-08-29/summary.json` |
+| `evidence/s1s3_17A6_2026-08-29/ymodem.log` |
+| `evidence/s1s3_17A6_2026-08-29/ruling.json` |
+| `evidence/s1s3_17A6_2026-08-29/ruling.json.consumed` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

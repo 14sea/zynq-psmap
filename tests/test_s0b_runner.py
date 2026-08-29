@@ -360,6 +360,25 @@ class SetupLoad(unittest.TestCase):
         self.assertNotIn("serial.Serial(", src)
         self.assertIn("timeout=timeout", src, "sb can hang forever without a timeout")
 
+    def test_sb_is_handed_a_blocking_descriptor_on_the_same_open_file(self):
+        """Board run 2026-08-29 #1: pyserial's fd is O_NONBLOCK; sb timed out on the
+        ymodem header. The descriptor must be blocking while sb runs, restored after,
+        and it must be the SAME file description (no second open)."""
+        import fcntl, os, pty, inspect
+        import serial
+        master, slave = pty.openpty()
+        ser = serial.Serial(os.ttyname(slave), 115200, timeout=0.1)
+        fd = ser.fileno()
+        before = fcntl.fcntl(fd, fcntl.F_GETFL)
+        self.assertTrue(before & os.O_NONBLOCK, "pyserial no longer opens O_NONBLOCK?")
+        with bsn.blocking_fd(fd) as inner:
+            self.assertEqual(inner, fd)
+            self.assertFalse(fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_NONBLOCK)
+        self.assertEqual(fcntl.fcntl(fd, fcntl.F_GETFL), before)
+        ser.close(); os.close(master)
+        src = inspect.getsource(bsn.SerialTransport.ymodem_send)
+        self.assertIn("blocking_fd(fd)", src)
+
     def test_loady_ready_is_consumed_by_the_guarded_flow_not_swallowed(self):
         """Review item 3: a prompt-waiting command() ate READY; begin_ymodem owns it now."""
         b = FakeUBoot()
