@@ -66,6 +66,7 @@ PCFG_DONE = 1 << 2
 
 # --------------------------------------------------------------------- wire format
 PROMPT_RE = re.compile(rb"(?P<prompt>zynq-uboot|Zynq)> ?$")
+PROMPT_ANY_RE = re.compile(rb"(?P<prompt>zynq-uboot|Zynq)> ")   # anywhere, for mode checks
 BOOT_BANNER_RE = re.compile(
     rb"U-Boot SPL|\r?\nU-Boot \d|Trying to boot from|Model: Ebang|"
     rb"Loading Environment from FAT|No ethernet found")
@@ -264,30 +265,38 @@ class BoardSession:
         return self._guard(line, raw)
 
     def _inspect_pending(self, where: str) -> bytes:
-        """Unsolicited bytes are read and judged, never discarded (a banner is a reboot)."""
+        """Unsolicited bytes are read and judged, never discarded (a banner is a reboot,
+        a prompt of the other kind is a control-plane change)."""
         pending = self.transport.drain()
         if pending:
             self.log.append(preserve(f"<unsolicited {where}>", pending))
-            if BOOT_BANNER_RE.search(pending):
-                self.note_disruption("soft_reset", f"boot banner pending {where}")
-                raise SessionRefusal(f"the board restarted {where}")
+            self._check_banner(pending, f"pending {where}")
+            self._check_prompt_mode(pending, f"pending {where}")
         return pending
 
-    def _guard(self, line: str, raw: bytes) -> bytes:
+    def _check_banner(self, raw: bytes, where: str) -> None:
         if BOOT_BANNER_RE.search(raw):
-            self.note_disruption("soft_reset", f"boot banner in the reply to {line!r}")
-            raise SessionRefusal(f"the board restarted under {line!r}")
-        m = PROMPT_RE.search(raw)
-        if not m:
+            self.note_disruption("soft_reset", f"boot banner {where}")
+            raise SessionRefusal(f"the board restarted ({where})")
+
+    def _check_prompt_mode(self, raw: bytes, where: str) -> None:
+        """Every prompt seen anywhere — reply, pending bytes, READY line — must be the
+        same kind as the first one; anything else is a different board or firmware."""
+        for m in PROMPT_ANY_RE.finditer(raw):
+            prompt = m.group("prompt").decode("ascii")
+            if self._prompt_mode is None:
+                self._prompt_mode = prompt
+            elif prompt != self._prompt_mode:
+                previous, self._prompt_mode = self._prompt_mode, prompt
+                self.note_disruption("prompt_mode_change", f"{previous!r} -> {prompt!r} {where}")
+                raise SessionRefusal(f"the prompt changed from {previous!r} to {prompt!r} ({where})")
+
+    def _guard(self, line: str, raw: bytes) -> bytes:
+        self._check_banner(raw, f"in the reply to {line!r}")
+        if not PROMPT_RE.search(raw):
             self.note_disruption("timeout", f"no prompt after {line!r}")
             raise SessionRefusal(f"no U-Boot prompt after {line!r}: {raw[-80:]!r}")
-        prompt = m.group("prompt").decode("ascii")
-        if self._prompt_mode is None:
-            self._prompt_mode = prompt
-        elif prompt != self._prompt_mode:
-            previous, self._prompt_mode = self._prompt_mode, prompt
-            self.note_disruption("prompt_mode_change", f"{previous!r} -> {prompt!r}")
-            raise SessionRefusal(f"the prompt changed from {previous!r} to {prompt!r}")
+        self._check_prompt_mode(raw, f"in the reply to {line!r}")
         return raw
 
     def sync(self) -> bytes:
@@ -376,9 +385,8 @@ class BoardSession:
         self.transport.send_line(line)
         raw = self.transport.read_until(READY_RE, 6.0)
         self.log.append(preserve(line, raw))
-        if BOOT_BANNER_RE.search(raw):
-            self.note_disruption("soft_reset", "boot banner instead of READY")
-            raise SessionRefusal("the board restarted under loady")
+        self._check_banner(raw, "instead of READY")
+        self._check_prompt_mode(raw, "in the loady reply")
         if not READY_RE.search(raw):
             self.note_disruption("timeout", "loady did not become ready")
             raise SessionRefusal("loady did not become ready for ymodem")

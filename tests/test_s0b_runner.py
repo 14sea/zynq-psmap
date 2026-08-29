@@ -373,6 +373,40 @@ class SetupLoad(unittest.TestCase):
             s.begin_ymodem(0x04000000)
         self.assertEqual(s.epoch, 1)
 
+    def test_loady_path_applies_the_prompt_mode_guard(self):
+        """Round 2 item 2: a foreign prompt in the pending bytes or in the READY reply
+        ends the epoch exactly as it would in a command reply."""
+        # pending bytes carry the other board's prompt
+        b = FakeUBoot()
+        s = session_for(b)
+        s.verify_identity()                       # establishes mode "Zynq"
+        b.unsolicited = b"\r\nzynq-uboot> "
+        with self.assertRaises(bsn.SessionRefusal):
+            s.begin_ymodem(0x04000000)
+        self.assertEqual(s.disruptions[-1]["kind"], "prompt_mode_change")
+        self.assertIsNone(s.identity)
+        # the READY line itself carries a foreign prompt
+        b = FakeUBoot()
+        s = session_for(b)
+        s.verify_identity()
+        t = s.transport
+        real = t.send_line
+
+        def ready_with_foreign_prompt(line):
+            real(line)
+            if line.startswith("loady"):
+                t.rx = b"zynq-uboot> " + t.rx
+        t.send_line = ready_with_foreign_prompt
+        with self.assertRaises(bsn.SessionRefusal):
+            s.begin_ymodem(0x04000000)
+        self.assertEqual(s.disruptions[-1]["kind"], "prompt_mode_change")
+        # pending bytes with the SAME prompt kind are fine
+        b = FakeUBoot()
+        s = session_for(b)
+        s.verify_identity()
+        b.unsolicited = b"\r\nZynq> "
+        s.begin_ymodem(0x04000000)
+
     def test_a_transfer_size_that_differs_from_the_file_is_refused(self):
         """Review item 9: the size U-Boot reports is verified against the file."""
         b = FakeUBoot()
@@ -462,6 +496,39 @@ class StageExecution(unittest.TestCase):
         with self.assertRaises(ValueError):
             pr.execute_plan(bsn.CONFIG_READ_CAPABILITY, s, plan, TABLE, pr.TARGET_SHA256, "S1")
         self.assertEqual(len(b.sent), sent_before)
+
+    def test_safety_metadata_changed_after_planning_is_refused(self):
+        """Round 2 item 1: the plan must equal the planner's canonical output, field for
+        field — a relaxed mask, timeout or CTRL requirement is refused before any send."""
+        mutations = {
+            "int_sts_error_mask": 0,
+            "int_sts_clear_mask": 0,
+            "ctrl_mask": 0,
+            "ctrl_required": 0,
+            "timeout_s": 3600.0,
+            "sentinel": 0xDEADBEEF,
+            "adjudicated_slice": [0, 101],
+            "dma_order": "one-bidirectional",
+            "cleanup_words": [0x20000000] * 5,
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                b = FakeUBoot()
+                s = ready_session(b)
+                plan = pp.build_plan(pr.TARGET_FAR, pp.PINNED_DMA_ORDER, pr.SENTINEL)
+                plan[field] = value
+                sent_before = len(b.sent)
+                with self.assertRaises(ValueError) as cm:
+                    pr.execute_plan(bsn.CONFIG_READ_CAPABILITY, s, plan, TABLE,
+                                    pr.TARGET_SHA256, "S1")
+                self.assertIn("canonical", str(cm.exception))
+                self.assertEqual(len(b.sent), sent_before)
+        # and the unmutated plan is accepted by the same check (two-way)
+        pr.validate_plan(pp.build_plan(pr.TARGET_FAR, pp.PINNED_DMA_ORDER, pr.SENTINEL))
+        plan = pp.build_plan(pr.TARGET_FAR, pp.PINNED_DMA_ORDER, pr.SENTINEL)
+        plan["extra_field"] = 1
+        with self.assertRaises(ValueError):
+            pr.validate_plan(plan)
 
     def test_the_sender_refuses_a_command_outside_the_plan(self):
         """Review item 4: RUNNER_EXTRA_COMMANDS is enforced, not merely observed."""

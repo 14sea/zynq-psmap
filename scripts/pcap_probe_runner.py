@@ -250,8 +250,18 @@ def _stop(stage: dict, verdict: str, detail: str) -> ProbeStop:
 
 
 def validate_plan(plan: dict) -> None:
-    """Re-adjudicate the plan that is about to be sent with the planner's own guards.
-    A plan is data; the runner must not trust that it came from `build_plan` untouched."""
+    """Re-adjudicate the plan that is about to be sent with the planner's own guards, then
+    require it to be IDENTICAL to what the planner builds for the same inputs.
+
+    A plan is data; the runner must not trust that it came from `build_plan` untouched.
+    The guards catch an illegal command; the equality catches everything else — an error
+    mask zeroed, a timeout stretched, a CTRL requirement relaxed — without the runner
+    having to know which fields are safety-relevant (review round 2, item 1)."""
+    canonical = pp.build_plan(plan["target_far"], plan["dma_order"], plan["sentinel"])
+    if plan != canonical:
+        diverging = sorted(k for k in set(plan) | set(canonical)
+                           if plan.get(k) != canonical.get(k))
+        raise ValueError(f"plan differs from the planner's canonical output in {diverging}")
     pp.check_allowlist(plan)
     pp.check_value_policy(plan)
     pp.check_dma_transactions(plan)
