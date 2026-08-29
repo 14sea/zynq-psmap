@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -1452,6 +1453,11 @@ def status_problems(text: str) -> list[str]:
     return problems
 
 
+def status_problems_from_path(path: Path) -> list[str]:
+    """Check a document without universal-newline translation hiding its source."""
+    return status_problems(path.read_bytes().decode("utf-8"))
+
+
 class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
     """One canonical table, byte-for-byte after normalisation, in all three documents."""
 
@@ -1464,10 +1470,11 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
     def test_every_document_carries_the_canonical_table(self):
         for name, path in self.DOCS.items():
             with self.subTest(doc=name):
-                self.assertEqual(status_problems(path.read_text()), [])
+                self.assertEqual(status_problems_from_path(path), [])
 
     def test_the_three_documents_agree_with_each_other(self):
-        tables = {n: status_table(p.read_text()) for n, p in self.DOCS.items()}
+        tables = {n: status_table(p.read_bytes().decode("utf-8"))
+                  for n, p in self.DOCS.items()}
         first = next(iter(tables.values()))
         for name, table in tables.items():
             with self.subTest(doc=name):
@@ -1704,6 +1711,27 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
                 problems = status_problems(text)
                 self.assertTrue(problems, f"{name} was accepted")
                 self.assertIn("outside the line text", " ".join(problems))
+
+    def test_real_document_ingress_preserves_terminator_differences(self):
+        """The path-based guard must not normalise CRLF/CR before checking.
+
+        `Path.read_text()` uses universal-newline translation, so the earlier helper-only
+        regression passed while a real CRLF document reached `status_problems()` as LF and
+        was accepted.  Drive the same entry point used for the three repository documents.
+        """
+        cases = {
+            "CRLF": self.GOOD.replace("\n", "\r\n"),
+            "lone CR": self.GOOD.replace("\n", "\r"),
+            "no final newline": self.GOOD.rstrip("\n"),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.md"
+            for name, source in cases.items():
+                with self.subTest(case=name):
+                    path.write_bytes(source.encode("utf-8"))
+                    problems = status_problems_from_path(path)
+                    self.assertTrue(problems, f"real {name} document was accepted")
+                    self.assertIn("outside the line text", " ".join(problems))
 
     def test_the_difference_branch_cannot_report_nothing(self):
         """Structural: no path through the branch may leave `problems` unchanged."""
