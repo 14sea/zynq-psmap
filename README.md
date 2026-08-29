@@ -22,7 +22,7 @@ A host-only question, asked separately from the repository it came out of:
 | S0b scope | the runner, one `BoardSession` carrying one identity and one epoch across loader and runner, and their tests |
 | what blocks S0 | S0b |
 | S1–S3 (on silicon) | **PASS, run #3, 2026-08-29** — `docs/s1s3_findings.md`, `evidence/s1s3_17A6_2026-08-29-02/` |
-| P1 (post-write readback) | **host-only: spec + runner + tests written 2026-08-29, not reviewed; no ruling** — `docs/p1_spec.md` |
+| P1 (post-write readback) | **host-only PASS (owner review, 2026-08-29, `237d38a`); board run awaits its own `whole-of-probe P1` ruling** — `docs/p1_spec.md`, `docs/p1_review_result.md` |
 | tests | see the command below |
 
 Nothing in this repository performs a board action without a whole-of-probe ruling.

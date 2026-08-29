@@ -5,8 +5,9 @@
 > ruling text `whole-of-probe P1`. The S1–S3 ruling does not extend to it.
 
 Status: drafted 2026-08-29 after S1–S3 passed (`s1s3_findings.md`). Implements
-`line_plan.md` §4 P1 with **one deliberate amendment** (§3 below), flagged for review.
-Not yet reviewed by a non-author.
+`line_plan.md` §4 P1 with **one deliberate amendment** (§3 below). **Owner review PASS
+(host-only) on 2026-08-29 at `237d38a`** — both gates accepted, see
+`p1_review_result.md`. Board run still needs its own ruling.
 
 ## 0. The one question
 

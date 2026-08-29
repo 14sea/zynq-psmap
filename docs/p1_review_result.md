@@ -74,3 +74,27 @@ All host‑only checks (write‑stream guards, DMA tuple, CRC‑register omissio
 - Its "other defects" 1–5 misread **expected** output: the `REFUSED …` and `STOP BLANK` lines it saw are printed by tests that deliberately exercise those refusals (`test_baseline_not_blank_stops_before_any_write`, the ruling/`sb`/evidence-directory refusal tests). Defect 7 is already covered (`_mutant(... pad not base)`).
 - Defect 6 is genuine and cheap: `CTRL` — including `PCAP_RATE_EN` — was stated to be "as found" across the write but not asserted. Fixed in the commit that adds this file: the write plan reads `CTRL` before the stream and after the completion wait, and the runner stops (`PRECONDITION`, non-discriminating) if the two differ.
 - **Status unchanged:** P1 stays HOLD under the owner's cross-review; the two gates await an independent ruling that the owner accepts (Gemini after its quota resets, or another reviewer the owner names). No ruling, no board contact.
+
+---
+
+## Owner review — 2026-08-29, `c78b218` → `237d38a`: **PASS (host-only)**
+
+Recorded from the owner's message, in substance:
+
+- **Gate 1 (two writes A→B):** §3 states explicitly that the only certified LUT-INIT
+  content-bit addresses are blank in the base carrier; blank→A is not discriminating by
+  itself, and A→B is the only step that can distinguish pre-write content. An explicit,
+  declared amendment of the line plan, not a hidden deviation. **Accepted.**
+- **Gate 2 (no CRC-register write):** UG470 confirms the CRC compare is triggered by the
+  CRC-register write; the carrier header's `COR1 = 0` / `RBCRC_SW = 0` shows readback CRC is
+  not enabled; the terminal JTAG requires `STAT.CRC_ERROR = 0`. "This P1's CRC omission
+  causes no observable CRC error" therefore reaches a **checkable warrant**. The residual
+  running CRC value is a recorded limitation not used by any later step and **must not be
+  extrapolated into a broader hardware guarantee.**
+- The CTRL (incl. `PCAP_RATE_EN`) before/after equality check closes that gap.
+- 294/294 tests, clean tree. Approved: push `c78b218` → `237d38a`; create a new
+  whole-of-probe P1 ruling; power-cycle first, then run P1.
+- **Scope:** any P1 conclusion is limited to `17A6`, U-Boot, and the specified
+  blank→A→B content-bit path; no extrapolation to P2, Claim B, other dies or Linux.
+
+The provisional GPT-OSS text above remains recorded and remains not relied on.
