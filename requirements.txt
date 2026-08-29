@@ -8,3 +8,7 @@ PyYAML>=6.0
 # fence -- so block context is delegated to a parser rather than re-derived.  The exact
 # version is pinned because its token source maps are part of the guard's contract.
 markdown-it-py==3.0.0
+
+# scripts/board_session.py opens the console; imported inside the transport so the
+# host-only tests and the planner never need it.
+pyserial>=3.5

@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import struct
 import sys
 import time
@@ -39,7 +40,13 @@ CARRIER_BIT = REPO_ROOT / "gate_runs/claimb_round1_carrier_2026_08_13_erratum006
 CARRIER_SHA256 = "8c3369e8e4755da5aceeb7844690d5e132b2e65647004c0a46c0e868e34f0b8a"
 TARGET_FAR = 0x00000B99                     # spec §3 / snapshot §4
 TARGET_SHA256 = "9029c9d032e0287453cb5c02cd18be42bc03acef38b17ef7295ee0d16beb6b1f"
-S2_FARS = (0x00000B98, 0x00000B9A)
+# S2 expectations are constants (snapshot §4b), not run-time computations; the table is
+# checked against them at load and they are never re-derived on the board.
+S2_EXPECTED = {
+    0x00000B98: "09e6542e15d2236ef806ab934ff70db967cde6d248bda996b753d6542839351c",
+    0x00000B9A: "80f782b962888a97d6a663d116d3b6158ff4d7408626ce6b83f43ba855356477",
+}
+S2_FARS = tuple(S2_EXPECTED)
 S3_TRANSACTIONS = 10
 SENTINEL = 0xA5A5A5A5
 
@@ -54,6 +61,13 @@ PRECHECK_REGS = (
 VERDICTS = ("BUFFER_UNCHANGED_FROM_PREFILL", "SENTINEL_REMAINS", "PASS", "BLANK",
             "MISADDRESS", "MISADDRESS_AMBIGUOUS", "NO_MATCH", "OVERFLOW", "TIMEOUT")
 
+# `OVERFLOW` is one bit. Every other error bit is a generic DMA/AXI error with no pinned
+# mechanism: it stops with `verdict: null` and its raw bit names (line_plan R3).
+INT_STS_RX_FIFO_OV = 1 << 18
+INT_STS_ERROR_NAMES = {23: "AXI_WTO", 22: "AXI_WERR", 21: "AXI_RTO", 20: "AXI_RERR",
+                       18: "RX_FIFO_OV", 15: "DMA_CMD_ERR", 14: "DMA_Q_OV",
+                       11: "P2D_LEN_ERR", 6: "PCFG_HMAC_ERR"}
+
 # the only commands the runner sends that are not in the plan; all read-only
 RUNNER_EXTRA_COMMANDS = frozenset({"printenv plmark", "dcache", bsn.SYNC_COMMAND})
 
@@ -62,6 +76,7 @@ RULING_TEXT = "whole-of-probe S1-S3"
 
 
 PRECONDITION = "PRECONDITION"   # not a verdict: a gate refused before any payload existed
+DMA_ERROR = "DMA_ERROR"         # not a verdict: a generic error bit with no pinned mechanism
 
 
 class ProbeStop(Exception):
@@ -93,10 +108,10 @@ def load_frame_table(bit_path: Path = CARRIER_BIT) -> dict:
     reverse: dict[str, list[int]] = {}
     for far, words in frames.items():
         reverse.setdefault(frame_sha256(words), []).append(far)
-    target_sha = frame_sha256(frames[TARGET_FAR])
-    if target_sha != TARGET_SHA256:
-        raise ProbeStop("NO_MATCH",
-                        f"the frame table's target hash {target_sha} != pinned {TARGET_SHA256}")
+    for far, pinned in {TARGET_FAR: TARGET_SHA256, **S2_EXPECTED}.items():
+        got = frame_sha256(frames[far])
+        if got != pinned:
+            raise ProbeStop("NO_MATCH", f"frame table {far:#010x} hashes to {got}, pinned {pinned}")
     return {"frames": frames, "reverse": reverse}
 
 
@@ -155,6 +170,12 @@ def check_ruling(path: Path) -> dict:
     consumed = path.with_name(path.name + ".consumed")
     if consumed.exists():
         raise bsn.SessionRefusal(f"the ruling {path} was consumed ({consumed.read_text().strip()})")
+    ruling = _parse_ruling(path)
+    ruling["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return ruling
+
+
+def _parse_ruling(path: Path) -> dict:
     try:
         ruling = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
@@ -166,15 +187,25 @@ def check_ruling(path: Path) -> dict:
         raise bsn.SessionRefusal(f"ruling text {ruling['ruling']!r} != {RULING_TEXT!r}")
     if ruling["boardid"] != bsn.REQUIRED_BOARDID:
         raise bsn.SessionRefusal(f"ruling names board {ruling['boardid']!r}")
-    ruling["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     return ruling
 
 
-def consume_ruling(path: Path, why: str) -> None:
+def claim_ruling(path: Path) -> Path:
+    """Consume the ruling atomically BEFORE the port is opened. One ruling, one attempt:
+    PASS, stop, crash and a concurrent runner all leave it consumed."""
     consumed = path.with_name(path.name + ".consumed")
-    partial = consumed.with_name(consumed.name + ".part")
-    partial.write_text(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {why}\n")
-    os.replace(partial, consumed)
+    try:
+        fd = os.open(consumed, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        raise bsn.SessionRefusal(f"the ruling {path} is already claimed") from None
+    with os.fdopen(fd, "w") as f:
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} claimed pid={os.getpid()}\n")
+    return consumed
+
+
+def record_outcome(consumed: Path, why: str) -> None:
+    with open(consumed, "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {why}\n")
 
 
 # ------------------------------------------------------------------ precheck (§5a.2)
@@ -211,11 +242,49 @@ def precheck(session: bsn.BoardSession) -> dict:
 
 
 def _stop(stage: dict, verdict: str, detail: str) -> ProbeStop:
-    if verdict == PRECONDITION:
-        stage["verdict"], stage["stop"], stage["detail"] = None, PRECONDITION, detail
+    if verdict in (PRECONDITION, DMA_ERROR):
+        stage["verdict"], stage["stop"], stage["detail"] = None, verdict, detail
     else:
         stage["verdict"], stage["detail"] = verdict, detail
     return ProbeStop(verdict, detail, stage)
+
+
+def validate_plan(plan: dict) -> None:
+    """Re-adjudicate the plan that is about to be sent with the planner's own guards.
+    A plan is data; the runner must not trust that it came from `build_plan` untouched."""
+    pp.check_allowlist(plan)
+    pp.check_value_policy(plan)
+    pp.check_dma_transactions(plan)
+    pp.check_schedule(plan)
+    phases = pp.command_buffer_phases(plan)
+    if len(phases) != 2:
+        raise ValueError(f"expected a readback stream and a cleanup stream, got {len(phases)}")
+    pp.validate_readback_stream(phases[0], plan["target_far"])
+    pp.validate_cleanup_stream(phases[1])
+    if plan["sentinel"] != SENTINEL:
+        raise ValueError(f"sentinel {plan['sentinel']:#010x} is not the pinned {SENTINEL:#010x}")
+
+
+def error_bit_names(value: int) -> list[str]:
+    return [name for bit, name in sorted(INT_STS_ERROR_NAMES.items(), reverse=True)
+            if value & (1 << bit)]
+
+
+class _Sender:
+    """Every line the runner sends goes through here; anything outside the validated plan
+    or the named read-only extras is refused before it reaches the transport."""
+
+    def __init__(self, session: bsn.BoardSession, plan: dict):
+        self.session = session
+        self.allowed = {s["cmd"] for s in plan["uboot_script"]} | RUNNER_EXTRA_COMMANDS
+
+    def __call__(self, cmd: str, timeout: float = 3.0) -> bytes:
+        if cmd not in self.allowed:
+            raise bsn.SessionRefusal(f"command not in the validated plan: {cmd!r}")
+        return self.session.command(cmd, timeout)
+
+    def words(self, cmd: str, addr: int, count: int) -> list[int]:
+        return bsn.parse_md(self(cmd), addr, count)
 
 
 def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
@@ -228,6 +297,8 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
     """
     if capability is not bsn.CONFIG_READ_CAPABILITY:
         raise bsn.SessionRefusal("execute_plan needs CONFIG_READ_CAPABILITY")
+    validate_plan(plan)
+    send = _Sender(session, plan)
     identity = session.authorise(capability)
     plmark = session.check_plmark()
     stage = {
@@ -245,16 +316,21 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
     }
     obs = stage["observations"]
     clear_mask, err_mask = plan["int_sts_clear_mask"], plan["int_sts_error_mask"]
+    pending_stop: ProbeStop | None = None     # a payload verdict waits for the cleanup
 
     for step in plan["uboot_script"]:
         name, cmd = step["step"], step["cmd"]
         form, start, span = pp.parse_command(cmd)
         if form == "dcache-off":
-            session.command(cmd)
-            obs["dcache"] = session.command("dcache").decode("ascii", "replace")
+            send(cmd)
+            reply = send("dcache").decode("ascii", "replace")
+            obs["dcache"] = reply
+            if "Cache is OFF" not in reply:
+                raise _stop(stage, PRECONDITION,
+                            f"D-cache is not off after `dcache off`: {reply.strip()!r}")
             continue
         if form == "mw.l":
-            session.command(cmd)
+            send(cmd)
             if name.startswith("dma-") and start == pp.REG["DMA_DEST_LEN"]:
                 stage["waits"].append({"command": name, "queued_at": time.monotonic()})
             continue
@@ -265,13 +341,17 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
             deadline = wait["queued_at"] + plan["timeout_s"]
             polls = 0
             while True:
-                value = session.read_command(cmd, start, 1)[0]
+                value = send.words(cmd, start, 1)[0]
                 polls += 1
                 if value & err_mask:
-                    wait.update(int_sts=f"{value:#010x}", polls=polls)
-                    raise _stop(stage, "OVERFLOW",
-                                f"{name}: INT_STS {value:#010x} has error bits "
-                                f"{value & err_mask:#010x}")
+                    wait.update(int_sts=f"{value:#010x}", polls=polls,
+                                error_bits=error_bit_names(value))
+                    if value & INT_STS_RX_FIFO_OV:
+                        raise _stop(stage, "OVERFLOW",
+                                    f"{name}: RX_FIFO_OV (INT_STS {value:#010x})")
+                    raise _stop(stage, DMA_ERROR,
+                                f"{name}: INT_STS {value:#010x} error bits "
+                                f"{error_bit_names(value)}; no mechanism is pinned")
                 if value & pp.INT_STS_D_P_DONE:
                     wait.update(int_sts=f"{value:#010x}", polls=polls,
                                 elapsed_s=round(time.monotonic() - wait["queued_at"], 6),
@@ -283,7 +363,7 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
                                 f"{name}: no D_P_DONE within {plan['timeout_s']} s "
                                 f"(INT_STS {value:#010x})")
             continue
-        words = session.read_command(cmd, start, count)
+        words = send.words(cmd, start, count)
         if name == "ctrl-gate":
             obs["ctrl"] = f"{words[0]:#010x}"
             if words[0] & plan["ctrl_mask"] != plan["ctrl_required"]:
@@ -314,12 +394,16 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
             stage["readout"] = [f"{w:#010x}" for w in words]
             stage.update(adjudicate(words, plan["sentinel"], expected_sha256, table["reverse"]))
             if stage["verdict"] != "PASS":
-                raise ProbeStop(stage["verdict"], stage["detail"], stage)
+                # §5d.5: the engine is still cleaned up (DESYNC) and the final status
+                # recorded; the stop is raised after the plan's last step.
+                pending_stop = ProbeStop(stage["verdict"], stage["detail"], stage)
         elif name == "status-final":
             obs["int_sts_final"] = f"{words[0]:#010x}"
         else:
             raise bsn.SessionRefusal(f"the plan has a read this runner does not gate: {name}")
     stage["elapsed_s"] = round(time.time() - stage["started"], 3)
+    if pending_stop is not None:
+        raise pending_stop
     return stage
 
 
@@ -338,7 +422,6 @@ def run_probe(session: bsn.BoardSession, out_dir: Path, ruling: dict,
               table: dict | None = None, bit_path: Path = CARRIER_BIT) -> dict:
     """Precheck → identity → setup load → S1 → S2 → S3, one boot, one epoch, one ruling."""
     table = table or load_frame_table(bit_path)
-    frames = table["frames"]
     summary = {"tool": TOOL_VERSION, "ruling": ruling, "stages": {}, "outcome": None}
 
     def finish(stage_record: dict | None, name: str):
@@ -350,7 +433,7 @@ def run_probe(session: bsn.BoardSession, out_dir: Path, ruling: dict,
         summary["precheck"] = precheck(session)
         summary["identity"] = session.verify_identity()
         summary["setup_load"] = session.load_carrier(
-            bsn.SETUP_LOAD_CAPABILITY, bit_path, CARRIER_SHA256)
+            bsn.SETUP_LOAD_CAPABILITY, bit_path, CARRIER_SHA256, out_dir / "ymodem.log")
         # S1 — one readback of the target
         plan = pp.build_plan(TARGET_FAR, pp.PINNED_DMA_ORDER, SENTINEL)
         finish(execute_plan(bsn.CONFIG_READ_CAPABILITY, session, plan, table,
@@ -359,7 +442,7 @@ def run_probe(session: bsn.BoardSession, out_dir: Path, ruling: dict,
         for i, far in enumerate(S2_FARS):
             plan = pp.build_plan(far, pp.PINNED_DMA_ORDER, SENTINEL)
             finish(execute_plan(bsn.CONFIG_READ_CAPABILITY, session, plan, table,
-                                frame_sha256(frames[far]), f"S2_{i}"), f"S2_{i}")
+                                S2_EXPECTED[far], f"S2_{i}"), f"S2_{i}")
         # S3 — ten independent transactions, all equal to the target AND to each other
         hashes = []
         for i in range(S3_TRANSACTIONS):
@@ -393,25 +476,37 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--port", default=bsn.PORT)
     args = ap.parse_args(argv)
 
+    # host preflight, all of it, before the ruling is claimed and before a port is opened
     try:
         ruling = check_ruling(args.ruling)
         if args.out.exists():
             raise bsn.SessionRefusal(f"{args.out} exists; evidence is never replaced")
+        if shutil.which("sb") is None:
+            raise bsn.SessionRefusal("`sb` (lrzsz) is not installed")
         table = load_frame_table()
-    except (bsn.SessionRefusal, ProbeStop) as exc:
+        for far in (TARGET_FAR, *S2_FARS):
+            validate_plan(pp.build_plan(far, pp.PINNED_DMA_ORDER, SENTINEL))
+    except (bsn.SessionRefusal, ProbeStop, ValueError) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
+    consumed = claim_ruling(args.ruling)          # atomic; one attempt per ruling
     args.out.mkdir(parents=True)
 
-    transport = bsn.SerialTransport(args.port)
+    outcome = "CRASHED before a summary was written"
     try:
-        session = bsn.BoardSession(transport)
-        summary = run_probe(session, args.out, ruling, table)
+        transport = bsn.SerialTransport(args.port)
+        try:
+            session = bsn.BoardSession(transport)
+            summary = run_probe(session, args.out, ruling, table)
+            outcome = summary["outcome"]
+        finally:
+            transport.close()
+    except bsn.SessionRefusal as exc:
+        outcome = f"REFUSED: {exc}"
     finally:
-        transport.close()
-    if summary["outcome"] != "PASS":
-        consume_ruling(args.ruling, summary["outcome"])
-        print(summary["outcome"], file=sys.stderr)
+        record_outcome(consumed, outcome)
+    if outcome != "PASS":
+        print(outcome, file=sys.stderr)
         return 1
     print("PASS: S1, S2, S3 — records in", args.out)
     return 0

@@ -43,6 +43,7 @@ import base64
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -71,6 +72,7 @@ BOOT_BANNER_RE = re.compile(
 ENV_LINE_RE = re.compile(rb"^([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$", re.MULTILINE)
 MD_LINE_RE = re.compile(rb"^([0-9a-fA-F]{8}):((?:\s+[0-9a-fA-F]{8}){1,4})", re.MULTILINE)
 READY_RE = re.compile(rb"Ready for binary|CC")
+YMODEM_SIZE_RE = re.compile(rb"Total Size = (0x[0-9a-fA-F]+)")
 SYNC_COMMAND = "echo"
 
 WRITE_CHUNK = 32          # U-Boot echoes with a blocking putc; pace the write
@@ -178,27 +180,41 @@ class SerialTransport:
                     break
         return buf
 
-    def command(self, line: str, timeout: float) -> bytes:
-        self._serial.reset_input_buffer()
+    def drain(self) -> bytes:
+        """Everything the board sent since the last read. Returned, never discarded:
+        a boot banner sitting in the receive buffer is the evidence of a reboot."""
+        pending = b""
+        while True:
+            chunk = self._serial.read(4096)
+            if not chunk:
+                return pending
+            pending += chunk
+
+    def send_line(self, line: str) -> None:
         data = line.encode("ascii") + b"\r"
         for start in range(0, len(data), WRITE_CHUNK):
             self._serial.write(data[start:start + WRITE_CHUNK])
             if len(data) > WRITE_CHUNK:
                 time.sleep(WRITE_GAP_S)
+
+    def read_until(self, pattern: re.Pattern, timeout: float) -> bytes:
+        return self._read_until(pattern, timeout)
+
+    def command(self, line: str, timeout: float) -> bytes:
+        self.send_line(line)
         return self._read_until(PROMPT_RE, timeout)
 
-    def ymodem_send(self, path: Path, log: Path, timeout: float) -> bytes:
+    def ymodem_send(self, path: Path, log: Path, timeout: float) -> None:
         """`sb -k` over THIS handle's descriptor. The port is not closed or reopened."""
         fd = self._serial.fileno()
         with open(log, "wb") as logf:
-            rc = subprocess.run(["sb", "-k", str(path)], stdin=fd, stdout=fd,
-                                stderr=logf, check=False)
+            try:
+                rc = subprocess.run(["sb", "-k", str(path)], stdin=fd, stdout=fd,
+                                    stderr=logf, check=False, timeout=timeout)
+            except subprocess.TimeoutExpired as exc:
+                raise SessionRefusal(f"sb did not finish within {timeout} s") from exc
         if rc.returncode != 0:
             raise SessionRefusal(f"sb failed rc={rc.returncode} (see {log})")
-        return self._read_until(PROMPT_RE, timeout)
-
-    def wait_ready(self, timeout: float) -> bytes:
-        return self._read_until(READY_RE, timeout)
 
     def descriptor(self) -> dict:
         return {"requested_port": self.requested_port, "resolved_port": self.resolved_port,
@@ -242,8 +258,22 @@ class BoardSession:
         """Send one named command; refuse an empty line; guard the reply before returning."""
         if not line.strip():
             raise SessionRefusal("an empty line repeats U-Boot's last command; refused")
+        self._inspect_pending(f"before {line!r}")
         raw = self.transport.command(line, timeout)
         self.log.append(preserve(line, raw))
+        return self._guard(line, raw)
+
+    def _inspect_pending(self, where: str) -> bytes:
+        """Unsolicited bytes are read and judged, never discarded (a banner is a reboot)."""
+        pending = self.transport.drain()
+        if pending:
+            self.log.append(preserve(f"<unsolicited {where}>", pending))
+            if BOOT_BANNER_RE.search(pending):
+                self.note_disruption("soft_reset", f"boot banner pending {where}")
+                raise SessionRefusal(f"the board restarted {where}")
+        return pending
+
+    def _guard(self, line: str, raw: bytes) -> bytes:
         if BOOT_BANNER_RE.search(raw):
             self.note_disruption("soft_reset", f"boot banner in the reply to {line!r}")
             raise SessionRefusal(f"the board restarted under {line!r}")
@@ -336,15 +366,48 @@ class BoardSession:
             raise SessionRefusal("plmark changed — not the boot that configured the PL")
         return seen
 
+    # -- ymodem, guarded, on the session's own transport -------------------------
+
+    def begin_ymodem(self, load_addr: int) -> bytes:
+        """`loady` answers with READY, not a prompt, so it cannot go through `command()`;
+        it still goes through the same pending-bytes and banner guards."""
+        self._inspect_pending("before loady")
+        line = f"loady {load_addr:#010x}"
+        self.transport.send_line(line)
+        raw = self.transport.read_until(READY_RE, 6.0)
+        self.log.append(preserve(line, raw))
+        if BOOT_BANNER_RE.search(raw):
+            self.note_disruption("soft_reset", "boot banner instead of READY")
+            raise SessionRefusal("the board restarted under loady")
+        if not READY_RE.search(raw):
+            self.note_disruption("timeout", "loady did not become ready")
+            raise SessionRefusal("loady did not become ready for ymodem")
+        return raw
+
+    def finish_ymodem(self, path: Path, log_path: Path, size: int,
+                      timeout: float = 600.0) -> bytes:
+        self.transport.ymodem_send(path, log_path, timeout)
+        tail = self.transport.read_until(PROMPT_RE, 20.0)
+        self.log.append(preserve("sb -k", tail))
+        self._guard("ymodem", tail)
+        m = YMODEM_SIZE_RE.search(tail)
+        if not m:
+            raise SessionRefusal("U-Boot did not report the transferred size")
+        reported = int(m.group(1), 16)
+        if reported != size:
+            raise SessionRefusal(f"U-Boot received {reported} bytes, the file is {size}")
+        return tail
+
     # -- the one configuration write (§5a.4–5) -----------------------------------
 
     def load_carrier(self, capability: _Capability, bit_path: Path, expected_sha256: str,
-                     load_addr: int = 0x04000000, log_path: Path = Path("/tmp/sb-psmap.log"),
-                     ) -> dict:
+                     log_path: Path, load_addr: int = 0x04000000) -> dict:
         """The session's single configuration write, on the verified identity's session."""
         if capability is not SETUP_LOAD_CAPABILITY:
             raise SessionRefusal("the setup load needs SETUP_LOAD_CAPABILITY")
         identity = self.authorise(capability)
+        if shutil.which("sb") is None:
+            raise SessionRefusal("`sb` (lrzsz) is not installed; refused before any command")
         data = bit_path.read_bytes()
         sha = hashlib.sha256(data).hexdigest()
         if sha != expected_sha256:
@@ -354,18 +417,9 @@ class BoardSession:
             raise SessionRefusal(
                 f"the PL is already configured (INT_STS={before:#010x}); power-cycle first")
         size = len(data)
-        # loady -> ymodem on the SAME handle -> prompt
-        self.transport.command(f"loady {load_addr:#010x}", 0.5)
-        ready = self.transport.wait_ready(6.0)
-        self.log.append(preserve(f"loady {load_addr:#010x}", ready))
-        if not READY_RE.search(ready):
-            self.note_disruption("timeout", "loady did not become ready")
-            raise SessionRefusal("loady did not become ready for ymodem")
-        tail = self.transport.ymodem_send(bit_path, log_path, 20.0)
-        self.log.append(preserve("sb -k", tail))
-        if not PROMPT_RE.search(tail):
-            self.note_disruption("timeout", "no prompt after ymodem")
-            raise SessionRefusal("no prompt after the ymodem transfer")
+        # loady -> ymodem on the SAME handle -> prompt, size verified
+        self.begin_ymodem(load_addr)
+        self.finish_ymodem(bit_path, log_path, size)
         # clear the sticky PCFG_DONE so the post-load check is an edge
         self.command(f"mw.l {DEVCFG_INT_STS:#010x} {PCFG_DONE:#010x} 1")
         cleared = self.read_word(DEVCFG_INT_STS)

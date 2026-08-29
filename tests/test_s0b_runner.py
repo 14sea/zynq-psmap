@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import struct
+import re
 import sys
 import tempfile
 import unittest
@@ -53,6 +53,9 @@ class FakeUBoot:
         self.pending: list[int] = []
         self.banner_on: set[str] = set()
         self.loaded = False
+        self.unsolicited = b""              # bytes waiting in the host's receive buffer
+        self.reported_size = pr.CARRIER_BIT.stat().st_size
+        self.dcache_reply = b"Data (writethrough) Cache is OFF"
 
     # -- helpers ------------------------------------------------------------------
     def word(self, addr):
@@ -90,7 +93,7 @@ class FakeUBoot:
         elif parts[0] == "echo":
             body = b""
         elif parts[0] == "dcache":
-            body = b"Data (writethrough) Cache is OFF" if len(parts) == 1 else b""
+            body = self.dcache_reply if len(parts) == 1 else b""
         elif parts[0] == "md.l":
             addr, count = int(parts[1], 16), int(parts[2], 0)
             lines = []
@@ -118,17 +121,38 @@ class FakeUBoot:
 
 
 class FakeTransport:
+    """The transport contract: drain / send_line / read_until / command / ymodem_send."""
+
     def __init__(self, board: FakeUBoot):
         self.board = board
+        self.rx = b""
+        self.sb_calls: list[Path] = []
+
+    def drain(self):
+        pending, self.board.unsolicited = self.board.unsolicited, b""
+        return pending
+
+    def send_line(self, line):
+        if line.startswith("loady"):
+            self.board.sent.append(line)
+            self.rx += (b"## Ready for binary (ymodem) download to 0x04000000 at "
+                        b"115200 bps...\r\nC")
+        else:
+            self.rx += self.board.reply(line)
+
+    def read_until(self, pattern, timeout):
+        out, self.rx = self.rx, b""
+        return out
 
     def command(self, line, timeout):
-        return self.board.reply(line)
-
-    def wait_ready(self, timeout):
-        return b"## Ready for binary (ymodem) download to 0x04000000 at 115200 bps...\r\nC"
+        self.send_line(line)
+        return self.read_until(bsn.PROMPT_RE, timeout)
 
     def ymodem_send(self, path, log, timeout):
-        return b"## Total Size = 0x001fcb17 = 2083607 Bytes" + PROMPT
+        self.sb_calls.append(path)
+        Path(log).write_bytes(b"fake sb log")
+        self.rx += (f"## Total Size = {self.board.reported_size:#010x} = "
+                    f"{self.board.reported_size} Bytes".encode() + PROMPT)
 
     def descriptor(self):
         return {"requested_port": "fake", "resolved_port": "fake", "device_id": "0:0"}
@@ -144,8 +168,12 @@ def ready_session(board: FakeUBoot) -> bsn.BoardSession:
     pr.precheck(s)
     s.verify_identity()
     s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256,
-                   log_path=Path(tempfile.mkdtemp()) / "sb.log")
+                   Path(tempfile.mkdtemp()) / "ymodem.log")
     return s
+
+
+def load_kwargs():
+    return dict(log_path=Path(tempfile.mkdtemp()) / "ymodem.log")
 
 
 def run_s1(board: FakeUBoot, far=pr.TARGET_FAR, expected=pr.TARGET_SHA256, after_load=None):
@@ -219,6 +247,18 @@ class SessionIdentityAndEpoch(unittest.TestCase):
         self.assertEqual(s.disruptions[-1]["kind"], "soft_reset")
         self.assertIsNone(s.identity)
 
+    def test_a_pending_boot_banner_is_read_not_discarded(self):
+        """Review item 2: bytes waiting in the receive buffer are evidence of a reboot."""
+        b = FakeUBoot()
+        s = session_for(b)
+        s.verify_identity()
+        b.unsolicited = b"\r\nU-Boot SPL 2026.04-rc5 (Aug 29 2026)\r\nTrying to boot from MMC1\r\n"
+        with self.assertRaises(bsn.SessionRefusal):
+            s.command("printenv plmark")
+        self.assertEqual(s.epoch, 1)
+        self.assertIsNone(s.identity)
+        self.assertTrue(any(e["command"].startswith("<unsolicited") for e in s.log))
+
     def test_a_missing_prompt_ends_the_epoch(self):
         b = FakeUBoot(prompt=b"")
         s = session_for(b)
@@ -279,9 +319,11 @@ class SetupLoad(unittest.TestCase):
     def test_load_needs_the_setup_capability_and_an_identity(self):
         s = session_for(FakeUBoot())
         with self.assertRaises(bsn.SessionRefusal):
-            s.load_carrier(bsn.CONFIG_READ_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256)
+            s.load_carrier(bsn.CONFIG_READ_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256,
+                           **load_kwargs())
         with self.assertRaises(bsn.SessionRefusal):
-            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256)
+            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256,
+                           **load_kwargs())
 
     def test_sha_gate_refuses_before_any_command_reaches_the_board(self):
         b = FakeUBoot()
@@ -289,7 +331,7 @@ class SetupLoad(unittest.TestCase):
         s.verify_identity()
         sent_before = list(b.sent)
         with self.assertRaises(bsn.SessionRefusal):
-            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, "00" * 32)
+            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, "00" * 32, **load_kwargs())
         self.assertEqual(b.sent, sent_before)
 
     def test_an_already_configured_pl_is_refused(self):
@@ -297,7 +339,8 @@ class SetupLoad(unittest.TestCase):
         s = session_for(b)
         s.verify_identity()
         with self.assertRaises(bsn.SessionRefusal):
-            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256)
+            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256,
+                           **load_kwargs())
         self.assertFalse(b.loaded)
 
     def test_a_successful_load_sets_plmark_and_records_the_edge(self):
@@ -315,6 +358,40 @@ class SetupLoad(unittest.TestCase):
         src = inspect.getsource(bsn.SerialTransport.ymodem_send)
         self.assertIn("fileno()", src)
         self.assertNotIn("serial.Serial(", src)
+        self.assertIn("timeout=timeout", src, "sb can hang forever without a timeout")
+
+    def test_loady_ready_is_consumed_by_the_guarded_flow_not_swallowed(self):
+        """Review item 3: a prompt-waiting command() ate READY; begin_ymodem owns it now."""
+        b = FakeUBoot()
+        s = session_for(b)
+        s.verify_identity()
+        raw = s.begin_ymodem(0x04000000)
+        self.assertRegex(raw, bsn.READY_RE)
+        self.assertEqual(s.log[-1]["command"], "loady 0x04000000")
+        b.unsolicited = b"\r\nU-Boot SPL 2026.04-rc5\r\n"
+        with self.assertRaises(bsn.SessionRefusal):
+            s.begin_ymodem(0x04000000)
+        self.assertEqual(s.epoch, 1)
+
+    def test_a_transfer_size_that_differs_from_the_file_is_refused(self):
+        """Review item 9: the size U-Boot reports is verified against the file."""
+        b = FakeUBoot()
+        b.reported_size = pr.CARRIER_BIT.stat().st_size - 256
+        s = session_for(b)
+        s.verify_identity()
+        with self.assertRaises(bsn.SessionRefusal) as cm:
+            s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256,
+                           **load_kwargs())
+        self.assertIn("received", str(cm.exception))
+        self.assertFalse(b.loaded)
+
+    def test_the_ymodem_log_lands_where_the_caller_says(self):
+        d = Path(tempfile.mkdtemp())
+        s = session_for(FakeUBoot())
+        s.verify_identity()
+        s.load_carrier(bsn.SETUP_LOAD_CAPABILITY, pr.CARRIER_BIT, pr.CARRIER_SHA256,
+                       d / "ymodem.log")
+        self.assertTrue((d / "ymodem.log").exists())
 
 
 # ====================================================================== precheck
@@ -373,6 +450,65 @@ class StageExecution(unittest.TestCase):
         first_stage = b.sent.index("dcache off")
         extra = {c for c in b.sent[first_stage:] if c not in plan_cmds}
         self.assertTrue(extra <= pr.RUNNER_EXTRA_COMMANDS, extra - pr.RUNNER_EXTRA_COMMANDS)
+
+    def test_a_tampered_plan_is_refused_before_anything_is_sent(self):
+        """Review item 4: the runner re-adjudicates the plan with the planner's guards."""
+        b = FakeUBoot()
+        s = ready_session(b)
+        plan = pp.build_plan(pr.TARGET_FAR, pp.PINNED_DMA_ORDER, pr.SENTINEL)
+        plan["uboot_script"][0] = {"step": "cache", "cmd": "mw.l 0xf8007000 0x00000000 1",
+                                   "why": "forbidden CTRL write", "addresses": [0xF8007000]}
+        sent_before = len(b.sent)
+        with self.assertRaises(ValueError):
+            pr.execute_plan(bsn.CONFIG_READ_CAPABILITY, s, plan, TABLE, pr.TARGET_SHA256, "S1")
+        self.assertEqual(len(b.sent), sent_before)
+
+    def test_the_sender_refuses_a_command_outside_the_plan(self):
+        """Review item 4: RUNNER_EXTRA_COMMANDS is enforced, not merely observed."""
+        s = ready_session(FakeUBoot())
+        plan = pp.build_plan(pr.TARGET_FAR, pp.PINNED_DMA_ORDER, pr.SENTINEL)
+        send = pr._Sender(s, plan)
+        with self.assertRaises(bsn.SessionRefusal):
+            send("mw.l 0xf8007000 0x00000000 1")
+        with self.assertRaises(bsn.SessionRefusal):
+            send("reset")
+        send("printenv plmark")
+
+    def test_dcache_still_on_is_a_precondition_stop(self):
+        """Review item 6: `dcache off` is verified, not just recorded."""
+        b = FakeUBoot()
+        b.dcache_reply = b"Data (writethrough) Cache is ON"
+        with self.assertRaises(pr.ProbeStop) as cm:
+            run_s1(b)
+        self.assertEqual(cm.exception.verdict, pr.PRECONDITION)
+        self.assertIn("D-cache", cm.exception.detail)
+        self.assertFalse(any(c.startswith(f"mw.l {pp.DST_BUF:#010x}") for c in b.sent))
+
+    def test_a_payload_stop_still_runs_the_cleanup_and_final_status(self):
+        """Review item 5: BLANK (and every payload verdict) is raised after DESYNC."""
+        for deliver in (lambda far: [0] * 202,
+                        lambda far: [pr.SENTINEL] * 202,
+                        lambda far: [0] * 101 + FRAMES[0xB98],
+                        lambda far: [0] * 101 + [0x12345678] * 101):
+            b = FakeUBoot(deliver=deliver)
+            with self.assertRaises(pr.ProbeStop) as cm:
+                run_s1(b)
+            desync = f"mw.l {pp.CMD_BUF + 8:#010x} {pp.CMD_DESYNC:#010x} 1"
+            with self.subTest(verdict=cm.exception.verdict):
+                self.assertIn(desync, b.sent, "DESYNC was not sent after the stop")
+                self.assertIn("int_sts_final", cm.exception.record["observations"])
+                self.assertEqual(len(cm.exception.record["waits"]), 3)
+
+    def test_only_rx_fifo_ov_is_named_overflow(self):
+        """Review item 8: other error bits are generic instrument stops with raw names."""
+        with self.assertRaises(pr.ProbeStop) as cm:
+            run_s1(FakeUBoot(error_bits=1 << 15))
+        self.assertEqual(cm.exception.verdict, pr.DMA_ERROR)
+        self.assertIsNone(cm.exception.record["verdict"])
+        self.assertEqual(cm.exception.record["waits"][-1]["error_bits"], ["DMA_CMD_ERR"])
+        with self.assertRaises(pr.ProbeStop) as cm:
+            run_s1(FakeUBoot(error_bits=1 << 18))
+        self.assertEqual(cm.exception.verdict, "OVERFLOW")
 
     def test_plmark_is_checked_before_every_stage(self):
         b = FakeUBoot()
@@ -518,12 +654,18 @@ class ProbeChain(unittest.TestCase):
         self.assertTrue(summary["uart_log"])
         self.assertEqual(summary["epoch_final"], 0)
 
-    def test_s2_expects_each_neighbour_own_hash(self):
+    def test_s2_expects_each_neighbour_own_pinned_hash(self):
+        """Review item 7 / snapshot §4b: the expectation is a constant, and the table agrees."""
         summary, out = self._run(FakeUBoot())
         for i, far in enumerate(pr.S2_FARS):
             rec = json.loads((out / f"S2_{i}.json").read_text())
-            self.assertEqual(rec["expected"]["frame_sha256"], pr.frame_sha256(FRAMES[far]))
-            self.assertEqual(rec["frame_sha256"], pr.frame_sha256(FRAMES[far]))
+            self.assertEqual(rec["expected"]["frame_sha256"], pr.S2_EXPECTED[far])
+            self.assertEqual(pr.S2_EXPECTED[far], pr.frame_sha256(FRAMES[far]))
+            self.assertRegex(pr.S2_EXPECTED[far], r"^[0-9a-f]{64}$")
+
+    def test_the_ymodem_log_is_part_of_the_evidence_directory(self):
+        summary, out = self._run(FakeUBoot())
+        self.assertTrue((out / "ymodem.log").exists())
 
     def test_s3_issues_ten_independent_transactions(self):
         b = FakeUBoot()
@@ -585,11 +727,54 @@ class RulingAndEntryPoint(unittest.TestCase):
                 with self.assertRaises(bsn.SessionRefusal):
                     pr.check_ruling(self._ruling(**kw))
 
-    def test_a_consumed_ruling_is_refused(self):
+    def test_a_claimed_ruling_is_refused_and_the_claim_is_atomic(self):
+        """Review item 1: one ruling, one attempt — claimed with O_EXCL before the port."""
         p = self._ruling()
-        pr.consume_ruling(p, "STOP BLANK")
+        consumed = pr.claim_ruling(p)
+        self.assertTrue(consumed.exists())
+        with self.assertRaises(bsn.SessionRefusal):
+            pr.claim_ruling(p)
         with self.assertRaises(bsn.SessionRefusal):
             pr.check_ruling(p)
+
+    def _main_with(self, board, ruling, out):
+        class T(FakeTransport):
+            def __init__(self, port):
+                super().__init__(board)
+
+            def close(self):
+                pass
+        original = bsn.SerialTransport
+        bsn.SerialTransport = T
+        try:
+            return pr.main(["--ruling", str(ruling), "--out", str(out)])
+        finally:
+            bsn.SerialTransport = original
+
+    def test_a_passing_run_also_consumes_its_ruling(self):
+        ruling = self._ruling()
+        base = Path(tempfile.mkdtemp())
+        self.assertEqual(self._main_with(FakeUBoot(), ruling, base / "run1"), 0)
+        consumed = ruling.with_name("ruling.json.consumed").read_text()
+        self.assertIn("claimed", consumed)
+        self.assertIn("PASS", consumed)
+        self.assertEqual(self._main_with(FakeUBoot(), ruling, base / "run2"), 2)
+        self.assertFalse((base / "run2").exists())
+
+    def test_a_port_that_fails_to_open_still_consumes_the_ruling(self):
+        ruling = self._ruling()
+        out = Path(tempfile.mkdtemp()) / "out"
+        original = bsn.SerialTransport
+
+        def refuse(port):
+            raise bsn.SessionRefusal("cannot stat /dev/ebaz-uart")
+        bsn.SerialTransport = refuse
+        try:
+            rc = pr.main(["--ruling", str(ruling), "--out", str(out)])
+        finally:
+            bsn.SerialTransport = original
+        self.assertEqual(rc, 1)
+        self.assertIn("REFUSED", ruling.with_name("ruling.json.consumed").read_text())
 
     def test_main_refuses_without_a_ruling_and_opens_no_port(self):
         opened = []
@@ -611,22 +796,21 @@ class RulingAndEntryPoint(unittest.TestCase):
     def test_main_consumes_the_ruling_on_a_stop(self):
         ruling = self._ruling()
         out = Path(tempfile.mkdtemp()) / "out"
-        board = FakeUBoot(deliver=lambda far: [0] * 202)
-
-        class T(FakeTransport):
-            def __init__(self, port):
-                super().__init__(board)
-
-            def close(self):
-                pass
-        original = bsn.SerialTransport
-        bsn.SerialTransport = T
-        try:
-            rc = pr.main(["--ruling", str(ruling), "--out", str(out)])
-        finally:
-            bsn.SerialTransport = original
+        rc = self._main_with(FakeUBoot(deliver=lambda far: [0] * 202), ruling, out)
         self.assertEqual(rc, 1)
-        self.assertTrue(ruling.with_name("ruling.json.consumed").exists())
+        self.assertIn("STOP BLANK", ruling.with_name("ruling.json.consumed").read_text())
+
+    def test_main_refuses_without_sb_before_claiming_the_ruling(self):
+        import shutil
+        ruling = self._ruling()
+        original = shutil.which
+        shutil.which = lambda name: None
+        try:
+            rc = pr.main(["--ruling", str(ruling), "--out", tempfile.mkdtemp() + "/out"])
+        finally:
+            shutil.which = original
+        self.assertEqual(rc, 2)
+        self.assertFalse(ruling.with_name("ruling.json.consumed").exists())
 
     def test_the_parser_exposes_nothing_that_relaxes_a_requirement(self):
         import argparse

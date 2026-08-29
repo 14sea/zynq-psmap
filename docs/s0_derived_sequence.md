@@ -585,7 +585,7 @@ honestly:
 |---|---|
 | S0a scope | the host-only derivation |
 | S0b scope | the runner, one `BoardSession` carrying one identity and one epoch, and their tests |
-| why S0 is open | S0b does not exist |
+| why S0 is open | S0b is written at 4e2c032 and awaits its non-author review; then completed S0 awaits the third-party review `line_plan.md` §6 D2 requires |
 
 `docs/pcap_probe_spec.md` §2 carries the same split, so the two documents agree.
 
