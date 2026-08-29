@@ -1845,6 +1845,41 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
             cwd=root, capture_output=True, text=True, timeout=120,
             env={**os.environ, "PSMAP_SUITE_COUNT_CHILD": "1"})
 
+    def test_the_document_test_consumes_the_helper_result(self):
+        """Non-enumerative: inject a problem and require the document test to fail.
+
+        Perturbing the documents can only catch a normalising assertion whose blind spot
+        happens to be in the perturbation set -- an assertion that strips leading spaces,
+        or applies NFKC, fails on every variant the matrix contains and so escapes it.
+        Extending the matrix chases instances of a class it cannot close, which is the
+        antonym-list shape again.
+
+        The property that actually matters is not "some perturbation makes it fail", it
+        is "the helper's verdict is what the assertion consumes".  That is observable
+        directly: make the helper report a problem and require the test to fail.  Every
+        variant of discard-the-result -- reading through an alias, reading the bytes and
+        renormalising them, or ignoring the call entirely -- fails this regardless of what
+        it normalises, because none of them consumes the value.
+        """
+        case = type(self)("test_every_document_carries_the_canonical_table")
+        with unittest.mock.patch.object(
+                P_TESTMOD, "status_problems_from_path",
+                lambda _path: ["injected: the helper reported a problem"]):
+            with self.assertRaises(AssertionError) as caught:
+                case.test_every_document_carries_the_canonical_table()
+        self.assertIn("injected", str(caught.exception),
+                      "the assertion did not compare the helper's own verdict")
+
+    def test_the_document_test_never_reads_text(self):
+        """Any newline-translating read fails, alias or not: the attribute is patched."""
+        case = type(self)("test_every_document_carries_the_canonical_table")
+
+        def _refuse(*_args, **_kwargs):
+            raise AssertionError("read_text reached the document assertion")
+
+        with unittest.mock.patch.object(Path, "read_text", _refuse):
+            case.test_every_document_carries_the_canonical_table()
+
     def test_the_real_documents_are_checked_byte_for_byte(self):
         """End-to-end on the real `DOCS` mapping, in a throwaway copy of the repository.
 
@@ -1876,37 +1911,71 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
                 "every document the real test reads must be perturbed here")
             # Recorded as they happen: pinning the inputs does not prove either loop ran,
             # and an empty iterable leaves every assertion inside it apparently present.
-            variant_names = ("CRLF", "tab separators", "trailing spaces")
+            # Every variant edits the canonical block itself, so each is anchored to the
+            # status table rather than to text that repeats elsewhere in the document.
+            #
+            # Three of these are whitespace and TWO DELIBERATELY ARE NOT.  A fixed list of
+            # whitespace perturbations is the antonym-list shape this repository already
+            # rejected once: a single normaliser undoes all of them at once, and an
+            # assertion that strips leading spaces, or applies NFKC, was verified to
+            # escape the whitespace-only matrix.  An omitted trailing pipe and an
+            # alignment colon are parse-identical yet survive every whitespace
+            # normalisation, so they close that class rather than one instance of it.
+            #
+            # The residual limit, stated rather than papered over: no finite perturbation
+            # set can exclude an assertion that reimplements the canonical equivalence.
+            block = CANONICAL_SOURCE_BLOCK.encode("utf-8")
+            s0_row = b"| **S0** | **NOT complete** |\n"
+            delimiter = b"|---|---|\n"
+            block_variants = {
+                "CRLF": block.replace(b"\n", b"\r\n"),
+                "tab separators": block.replace(
+                    s0_row, b"| **S0**\t|\t**NOT complete** |\n"),
+                "trailing spaces": block.replace(
+                    s0_row, b"| **S0** | **NOT complete** |  \n"),
+                "omitted trailing pipe": block.replace(
+                    s0_row, b"| **S0** | **NOT complete**\n"),
+                "alignment colon": block.replace(delimiter, b"|:---|---|\n"),
+            }
+            variant_names = ("CRLF", "tab separators", "trailing spaces",
+                             "omitted trailing pipe", "alignment colon")
+            self.assertEqual(tuple(block_variants), variant_names,
+                             "the byte-level perturbation set has changed")
+
+            # A variant is only evidence if it is source-different yet parse-identical:
+            # otherwise it would be refused for the wrong reason.
+            canonical_rows = [tuple(r) for r in CANONICAL_STATUS_TABLE]
+            for variant, changed_block in block_variants.items():
+                with self.subTest(variant=variant, check="source-equivalent"):
+                    text = changed_block.decode("utf-8")
+                    self.assertNotEqual(changed_block, block,
+                                        "the perturbation changed nothing")
+                    self.assertEqual(status_table(text), canonical_rows,
+                                     "the perturbation must still parse as canonical")
+                    self.assertTrue(status_problems(text),
+                                    "the perturbation must be refused on its source")
+
             checked: list[tuple[str, str]] = []
             for rel in perturbed:
                 target = root / rel
                 original = target.read_bytes()
-                row = b"| **S0** | **NOT complete** |\n"
-                self.assertEqual(original.count(row), 1,
-                                 f"the canonical S0 row is not unique in {rel}")
-                variants = {
-                    "CRLF": original.replace(b"\n", b"\r\n"),
-                    "tab separators": original.replace(
-                        row, b"| **S0**\t|\t**NOT complete** |\n"),
-                    "trailing spaces": original.replace(
-                        row, b"| **S0** | **NOT complete** |  \n"),
-                }
-                self.assertEqual(tuple(variants), variant_names,
-                                 "the byte-level perturbation set has changed")
-                for variant, changed in variants.items():
+                self.assertEqual(original.count(block), 1,
+                                 f"the canonical block is not unique in {rel}")
+                for variant, changed_block in block_variants.items():
                     checked.append((rel, variant))
                     with self.subTest(document=rel, variant=variant):
+                        changed = original.replace(block, changed_block)
                         self.assertNotEqual(changed, original,
                                             "the perturbation did not change the file")
                         try:
                             target.write_bytes(changed)
                             result = self._run_document_test_in(root)
-                            diagnostic = ("outside the line text" if variant == "CRLF"
-                                          else "source row")
                             self.assertNotEqual(
                                 result.returncode, 0,
-                                f"{variant} in {rel} was accepted by the real document test")
-                            self.assertIn(diagnostic, result.stderr)
+                                f"{variant} in {rel} was accepted by the real "
+                                f"document test")
+                            self.assertRegex(
+                                result.stderr, r"outside the line text|source row")
                         finally:
                             target.write_bytes(original)
             expected = [(rel, variant) for rel in perturbed for variant in variant_names]
