@@ -567,7 +567,8 @@ it is a derivation, not a discharge, and it stands or falls with 8a.
 §2c, **write the runner and its tests**, and reproduce the §4 target selection. Three are
 done. **The runner is written at `4e2c032`** (`scripts/pcap_probe_runner.py`), together
 with the single `BoardSession` carrying one identity and one epoch across loader and runner
-(§5a step 3, §5d.1; `scripts/board_session.py`) — **not yet reviewed by a non-author**.
+(§5a step 3, §5d.1; `scripts/board_session.py`) — **cross-reviewed by a non-author, PASS at
+`bde1d07`**; completed S0 still awaits the third-party review of `line_plan.md` §6 D2.
 
 An earlier version of this document deferred those "to the board-authorised work" while the
 rest of the repository described this stage as finished. That was a contradiction with the
@@ -578,14 +579,14 @@ honestly:
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
 | **§8a** | **technically resolved; independently reviewed: NO** |
-| **S0b** | **written at 4e2c032; reviewed: NO** |
+| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |
 | **S0** | **NOT complete** |
 
 | | |
 |---|---|
 | S0a scope | the host-only derivation |
 | S0b scope | the runner, one `BoardSession` carrying one identity and one epoch, and their tests |
-| why S0 is open | S0b is written at 4e2c032 and awaits its non-author review; then completed S0 awaits the third-party review `line_plan.md` §6 D2 requires |
+| why S0 is open | completed S0 (§8a included) awaits the third-party review `line_plan.md` §6 D2 requires; S0b's own non-author cross-review is done at bde1d07 |
 
 `docs/pcap_probe_spec.md` §2 carries the same split, so the two documents agree.
 

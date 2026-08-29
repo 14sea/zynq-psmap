@@ -723,7 +723,7 @@ class ScopeIsStatedHonestly(unittest.TestCase):
     def test_the_runner_is_named_with_its_commit_and_review_state(self):
         flat = " ".join(self.SEQ.replace("*", "").replace("`", "").split())
         self.assertRegex(flat, r"runner is written at 4e2c032")
-        self.assertRegex(flat, r"not yet reviewed by a non-author")
+        self.assertRegex(flat, r"cross-reviewed by a non-author, PASS at bde1d07")
 
     def test_the_stage_table_says_s0_is_not_complete(self):
         """Parse the row rather than scan the prose: the row is the load-bearing claim."""
@@ -733,10 +733,11 @@ class ScopeIsStatedHonestly(unittest.TestCase):
         self.assertRegex(row.group(1), r"NOT complete",
                          f"the S0 row claims {row.group(1)!r}")
 
-    def test_the_stage_table_lists_s0b_as_written_and_unreviewed(self):
+    def test_the_stage_table_lists_s0b_as_written_and_cross_reviewed(self):
         row = re.search(r"^\|\s*\*\*S0b[^|]*\|\s*(.+?)\s*\|\s*$", self.SEQ, re.M)
         self.assertIsNotNone(row, "the stage table has no S0b row")
-        self.assertRegex(row.group(1), r"written at 4e2c032; reviewed: NO")
+        self.assertIn("written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS",
+                      row.group(1))
 
     def test_settling_8a_is_a_precondition_for_s0(self):
         flat = " ".join(self.OWNER.replace("*", "").split())
@@ -1380,7 +1381,7 @@ CANONICAL_STATUS_TABLE = (
     ("gate", "state"),
     ("S0a", "PASS at 8cb544b"),
     ("§8a", "technically resolved; independently reviewed: NO"),
-    ("S0b", "written at 4e2c032; reviewed: NO"),
+    ("S0b", "written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS"),
     ("S0", "NOT complete"),
 )
 STATUS_KEYS = tuple(k for k, _ in CANONICAL_STATUS_TABLE[1:])
@@ -1454,7 +1455,7 @@ CANONICAL_SOURCE_BLOCK = (
     "|---|---|\n"
     "| **S0a** | **PASS at `8cb544b`** |\n"
     "| **§8a** | **technically resolved; independently reviewed: NO** |\n"
-    "| **S0b** | **written at 4e2c032; reviewed: NO** |\n"
+    "| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |\n"
     "| **S0** | **NOT complete** |\n"
 )
 
@@ -1554,7 +1555,7 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
     GOOD = ("| gate | state |\n|---|---|\n"
             "| **S0a** | **PASS at `8cb544b`** |\n"
             "| **§8a** | **technically resolved; independently reviewed: NO** |\n"
-            "| **S0b** | **written at 4e2c032; reviewed: NO** |\n"
+            "| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |\n"
             "| **S0** | **NOT complete** |\n")
 
     def test_the_control_table_is_accepted(self):
@@ -1592,14 +1593,14 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
                         "| **S0a** | **PASS at `8cb544b`**; pending non-author review |")
                .replace("| **§8a** | **technically resolved; independently reviewed: NO** |",
                         "| **§8a** | **technically resolved; independently reviewed: NO**; PASS at 77e29a5 |")
-               .replace("| **S0b** | **written at 4e2c032; reviewed: NO** |",
-                        "| **S0b** | **written at 4e2c032; reviewed: NO**; active |"))
+               .replace("| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |",
+                        "| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS**; active |"))
         problems = status_problems(bad)
         self.assertGreaterEqual(len(problems), 3, f"only caught {problems}")
 
     def test_a_prefix_is_refused_too(self):
-        bad = self.GOOD.replace("| **S0b** | **written at 4e2c032; reviewed: NO** |",
-                                "| **S0b** | probably **written at 4e2c032; reviewed: NO** |")
+        bad = self.GOOD.replace("| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |",
+                                "| **S0b** | probably **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |")
         self.assertTrue(status_problems(bad))
 
     def test_reordering_removing_duplicating_and_extending_are_refused(self):

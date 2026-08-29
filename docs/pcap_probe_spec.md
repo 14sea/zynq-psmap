@@ -92,7 +92,7 @@ line:
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
 | **§8a** | **technically resolved; independently reviewed: NO** |
-| **S0b** | **written at 4e2c032; reviewed: NO** |
+| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |
 | **S0** | **NOT complete** |
 
 What each stage contains:
@@ -118,8 +118,9 @@ withdrawn on that ground. It is
 pinned in the planner rather than left to the operator, and the losing reading is retained
 as a named alternative a new run may adopt after any stop. **No observation is claimed to
 reveal a wrong pin**: `DMA_CMD_ERR` and `P2D_LEN_ERR` are recorded as candidate diagnoses
-only. S0 still awaits **S0b**'s non-author review — the runner and `BoardSession` were
-written at `4e2c032` — and, per `line_plan.md` §6 D2, a third-party review of completed S0.
+only. S0b — the runner and `BoardSession`, written at `4e2c032` — passed its non-author
+cross-review at `bde1d07`. S0 still awaits, per `line_plan.md` §6 D2, a third-party review
+of completed S0 as a whole, §8a included.
 
 An earlier draft of `stop_loss.md` said authorisation was "per-stage, not blanket". That
 was wrong and contradicted the snapshot's §8; it has been corrected. Both documents now say

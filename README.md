@@ -5,13 +5,13 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a passed at `8cb544b`; §8a technically resolved, not independently reviewed; S0b written, not reviewed
+## Status — S0a passed at `8cb544b`; §8a technically resolved, not independently reviewed; S0b cross-reviewed
 
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
 | **§8a** | **technically resolved; independently reviewed: NO** |
-| **S0b** | **written at 4e2c032; reviewed: NO** |
+| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |
 | **S0** | **NOT complete** |
 
 | | |
@@ -34,8 +34,11 @@ and no ruling has been issued.
 **S0 is not complete and this repository does not claim it is.** The specification's S0
 includes writing the runner and the single `BoardSession` that carries one identity and one
 epoch across loader and runner; those are S0b, written at `4e2c032` under the host-only
-authorisation in [`docs/line_plan.md`](docs/line_plan.md) §6 D4 and **not yet reviewed by a
-non-author**. The split is
+authorisation in [`docs/line_plan.md`](docs/line_plan.md) §6 D4 and **cross-reviewed by a
+non-author over three rounds, passing at `bde1d07`** (2026-08-29). S0 is still not
+complete: [`docs/line_plan.md`](docs/line_plan.md) §6 D2 requires a third-party review of
+completed S0 as a whole — including §8a, which neither co-author can review — before any
+board ruling is sought. The split is
 recorded in [`docs/pcap_probe_spec.md`](docs/pcap_probe_spec.md) §2a, in the governing
 document rather than in a status line.
 
