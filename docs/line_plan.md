@@ -259,6 +259,9 @@ ruling.** D1 waits for P2/P3. The status table is unchanged by this document: S0
 complete, S0b is authorised but not started, S1–S3 are not authorised, and the board has
 not been touched.
 
+**Dated note, 2026-08-29 (evening):** S1–S3 **PASS** on `17A6` under ruling `2026-08-29-02`,
+run #3 (`docs/s1s3_findings.md`). P0 is PASS. P1 and P2 each still need their own ruling.
+
 **Dated note, 2026-08-29 (later the same day):** S0b was written (`4e2c032`) and
 cross-reviewed (`bde1d07`); the D2 third-party review was performed by an LLM (Gemini 3.1
 Pro) per the owner's ruling that the third party may be an LLM, and passed at `7a5b990`

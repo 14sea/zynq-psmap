@@ -141,6 +141,24 @@ not the stage label, is what it enforces.
 | `evidence/s1s3_17A6_2026-08-29-01/ymodem.log` |
 | `evidence/s1s3_17A6_2026-08-29-01/ruling.json` |
 | `evidence/s1s3_17A6_2026-08-29-01/ruling.json.consumed` |
+| `evidence/s1s3_17A6_2026-08-29-02/S1.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S2_0.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S2_1.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_0.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_1.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_2.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_3.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_4.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_5.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_6.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_7.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_8.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/S3_9.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/summary.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/ymodem.log` |
+| `evidence/s1s3_17A6_2026-08-29-02/ruling.json` |
+| `evidence/s1s3_17A6_2026-08-29-02/ruling.json.consumed` |
+| `docs/s1s3_findings.md` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

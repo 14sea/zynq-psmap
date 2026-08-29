@@ -5,7 +5,7 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a passed at `8cb544b`; §8a and S0b reviewed; S0 complete at `7a5b990` (D2 PASS)
+## Status — S0a `8cb544b` → S0 complete at `7a5b990` (D2 PASS); S1–S3 PASS on `17A6` (2026-08-29, run #3)
 
 | gate | state |
 |---|---|
@@ -16,12 +16,12 @@ A host-only question, asked separately from the repository it came out of:
 
 | | |
 |---|---|
-| board | **not touched, and not authorised** |
+| board | **17A6, three runs on 2026-08-29 under three owner rulings** (two host-instrument refusals before any DMA, then run #3) |
 | S0a scope | §2b discharged against UG585; §2c derived and pinned against UG585 **and UG470**; planner + guards; §4 target selection reproduced |
 | §8a content | resolved host-only 2026-08-28: two unidirectional DMA commands with the non-active endpoint's length 0, as AMD's `XDcfg_PcapReadback()` issues; the losing reading is retained as an alternative a new run may adopt after any stop |
 | S0b scope | the runner, one `BoardSession` carrying one identity and one epoch across loader and runner, and their tests |
 | what blocks S0 | S0b |
-| S1–S3 (on silicon) | **not authorised** |
+| S1–S3 (on silicon) | **PASS, run #3, 2026-08-29** — `docs/s1s3_findings.md`, `evidence/s1s3_17A6_2026-08-29-02/` |
 | tests | see the command below |
 
 Nothing in this repository performs a board action without a whole-of-probe ruling.
