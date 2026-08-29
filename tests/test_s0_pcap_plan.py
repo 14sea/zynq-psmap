@@ -1874,25 +1874,44 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
                 sorted(perturbed),
                 sorted(str(path.relative_to(REPO_ROOT)) for path in self.DOCS.values()),
                 "every document the real test reads must be perturbed here")
-            # Recorded as it happens: pinning the tuple does not prove the loop ran, and
-            # `for rel in ():` left every assertion inside it apparently present.
-            checked: list[str] = []
+            # Recorded as they happen: pinning the inputs does not prove either loop ran,
+            # and an empty iterable leaves every assertion inside it apparently present.
+            variant_names = ("CRLF", "tab separators", "trailing spaces")
+            checked: list[tuple[str, str]] = []
             for rel in perturbed:
-                checked.append(rel)
                 target = root / rel
                 original = target.read_bytes()
-                try:
-                    target.write_bytes(original.replace(b"\n", b"\r\n"))
-                    result = self._run_document_test_in(root)
-                    with self.subTest(document=rel):
-                        self.assertNotEqual(
-                            result.returncode, 0,
-                            f"a CRLF {rel} was accepted by the real document test")
-                        self.assertIn("outside the line text", result.stderr)
-                finally:
-                    target.write_bytes(original)
-            self.assertEqual(checked, list(perturbed),
-                             "the perturbation loop did not run over every document")
+                row = b"| **S0** | **NOT complete** |\n"
+                self.assertEqual(original.count(row), 1,
+                                 f"the canonical S0 row is not unique in {rel}")
+                variants = {
+                    "CRLF": original.replace(b"\n", b"\r\n"),
+                    "tab separators": original.replace(
+                        row, b"| **S0**\t|\t**NOT complete** |\n"),
+                    "trailing spaces": original.replace(
+                        row, b"| **S0** | **NOT complete** |  \n"),
+                }
+                self.assertEqual(tuple(variants), variant_names,
+                                 "the byte-level perturbation set has changed")
+                for variant, changed in variants.items():
+                    checked.append((rel, variant))
+                    with self.subTest(document=rel, variant=variant):
+                        self.assertNotEqual(changed, original,
+                                            "the perturbation did not change the file")
+                        try:
+                            target.write_bytes(changed)
+                            result = self._run_document_test_in(root)
+                            diagnostic = ("outside the line text" if variant == "CRLF"
+                                          else "source row")
+                            self.assertNotEqual(
+                                result.returncode, 0,
+                                f"{variant} in {rel} was accepted by the real document test")
+                            self.assertIn(diagnostic, result.stderr)
+                        finally:
+                            target.write_bytes(original)
+            expected = [(rel, variant) for rel in perturbed for variant in variant_names]
+            self.assertEqual(checked, expected,
+                             "the perturbation matrix did not check every case")
 
     def test_the_difference_branch_cannot_report_nothing(self):
         """Structural: no path through the branch may leave `problems` unchanged."""
