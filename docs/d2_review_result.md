@@ -64,3 +64,25 @@ There is a path where a `TIMEOUT` (or `OVERFLOW`) stop is produced purely by the
 ### 5. Anything you could not verify and why
 
 - I could not verify the timing constraint (C3, 145 MB/s throughput preconditions) because the review is governed by strict host-only rules. I cannot open `/dev/ebaz-uart` to measure the PCAP clock on the `17A6` board or run a live throughput test. This weakness (U3) is properly declared by the authors in the package.
+
+---
+
+## Authors' response after round 1 (commit `7a5b990`)
+
+Not reviewer text. The pin was not changed; §8a gained the named hypothesis **H-FIFO** (no source establishes or refutes that readback words reach the RxFIFO before the second DMA is queued; the pre-registered one-bidirectional alternative in a NEW run is its discriminating test), and the N5 row of `s0_ug585_discharge.md` now states how N5 is reflected as policy. The response was sent to the same reviewer session with a demand to cite a source for the defect-1 mechanism or withdraw it.
+
+---
+
+## Round 2 — reviewer text (verbatim)
+
+### 1. Round-2 Verdict
+**PASS**. The authors have rigorously defended the derivation sequence against the round-1 critique by citing the vendor's own reference driver behavior and the specific language in UG585, exposing the reviewer's mechanism claim as an unsubstantiated assumption. By formalizing the reviewer's concern into an open, testable hypothesis (H-FIFO) with a pre-registered alternative, the authors maintain fidelity to the established driver pattern while safely accounting for unknown silicon behavior. The documentation updates thoroughly resolve the previous ambiguities, making the S0 derivation robust, fully justified, and ready to proceed.
+
+### 2. Defect 1
+**WITHDRAWN**. I cannot cite a UG585 passage, UG470 passage, or embeddedsw code that establishes readback data reaches the RxFIFO before the read DMA is queued. Furthermore, I concede that AMD's `XDcfg_PcapReadback()` driver implementation executes the command and read phases sequentially (with a wait in between) regardless of readback length. Therefore, asserting that `two-unidirectional` is definitively broken was incorrect. The authors' introduction of H-FIFO as a named, open hypothesis—coupled with the pre-registered `one-bidirectional` alternative to serve as a discriminating test on a second run—is an excellent and scientifically sound way to resolve the defect without prematurely abandoning the vendor-backed sequence.
+
+### 3. Defect 2
+**RESOLVED-BY-DOCUMENTATION**. The explanation provided in the updated N5 row of `docs/s0_ug585_discharge.md` is technically sound. Polling a 31-word FIFO over a UART connection is futile given the microsecond timescales of PCAP DMA transfers. Relying on the `RX_FIFO_OV` interrupt (N6) as a hard stop is the correct architectural choice for handling an overflow condition, and deriving the timeout for the full-rate case appropriately bounds the execution. The constraint is now accurately reflected in the runner's policy and properly documented.
+
+### 4. New Defects
+None. The text additions in `docs/s0_derived_sequence.md` and `docs/s0_ug585_discharge.md` are precise and introduce no new logical or structural flaws.

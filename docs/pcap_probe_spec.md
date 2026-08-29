@@ -91,9 +91,9 @@ line:
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
-| **§8a** | **technically resolved; independently reviewed: NO** |
+| **§8a** | **technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)** |
 | **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |
-| **S0** | **NOT complete** |
+| **S0** | **complete at 7a5b990 (D2 PASS)** |
 
 What each stage contains:
 
@@ -119,8 +119,11 @@ pinned in the planner rather than left to the operator, and the losing reading i
 as a named alternative a new run may adopt after any stop. **No observation is claimed to
 reveal a wrong pin**: `DMA_CMD_ERR` and `P2D_LEN_ERR` are recorded as candidate diagnoses
 only. S0b — the runner and `BoardSession`, written at `4e2c032` — passed its non-author
-cross-review at `bde1d07`. S0 still awaits, per `line_plan.md` §6 D2, a third-party review
-of completed S0 as a whole, §8a included.
+cross-review at `bde1d07`. The third-party review of completed S0 as a whole that
+`line_plan.md` §6 D2 requires — §8a included — was performed on 2026-08-29 (Gemini 3.1 Pro,
+`docs/d2_review_result.md`, round 2 PASS at `7a5b990`); **S0 is complete at 7a5b990**.
+That completion satisfies §2's precondition for *applying* for a board ruling; it does not
+constitute one.
 
 An earlier draft of `stop_loss.md` said authorisation was "per-stage, not blanket". That
 was wrong and contradicted the snapshot's §8; it has been corrected. Both documents now say

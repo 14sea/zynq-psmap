@@ -416,12 +416,14 @@ link. Recorded as **derived, not measured** until an S1 record carries a real el
 
 ### 8a. Whether a readback is one bidirectional DMA command or two — **RESOLVED: two**
 
-**Resolved 2026-08-28, host-only. Independently reviewed: NO.** Every commit from
+**Resolved 2026-08-28, host-only. Independently reviewed: PASS (D2, 2026-08-29, at
+`7a5b990` — `d2_review_result.md`).** History, kept as history: every commit from
 `d0ba146` to `77e29a5` was reviewed by the other of the two co-authors, and each round
 found real defects in the other's work. That is cross-review, not the review this
-specification asks for: §8 requires "the party that did not write it", and **no party
-independent of both has reviewed the §8a delta as a whole**, because both wrote parts of
-it. A PASS recorded on 2026-08-29 was withdrawn for exactly that reason.
+specification asks for: §8 requires "the party that did not write it", and until the D2
+review **no party independent of both has reviewed the §8a delta as a whole**, because
+both wrote parts of it. A PASS recorded on 2026-08-29 was withdrawn for exactly that
+reason; the D2 third party (neither co-author) later answered Q1 on this section with OK.
 
 The documents do **not** settle the question; what settles it is stated below, and the
 losing reading is kept as a named alternative rather than deleted.
@@ -579,14 +581,15 @@ completion semantics then. The plan therefore tags **only the DDR-side address**
 on `D_P_DONE` (§5), which is documented without reference to the tag. This is consistent, but
 it is a derivation, not a discharge, and it stands or falls with 8a.
 
-## 9. Scope — this is S0a, and S0 is NOT complete
+## 9. Scope — S0a, S0b and the D2 review: S0 is complete at 7a5b990
 
 **The governing specification's S0 has four deliverables**: discharge §2b, derive and pin
 §2c, **write the runner and its tests**, and reproduce the §4 target selection. Three are
 done. **The runner is written at `4e2c032`** (`scripts/pcap_probe_runner.py`), together
 with the single `BoardSession` carrying one identity and one epoch across loader and runner
 (§5a step 3, §5d.1; `scripts/board_session.py`) — **cross-reviewed by a non-author, PASS at
-`bde1d07`**; completed S0 still awaits the third-party review of `line_plan.md` §6 D2.
+`bde1d07`**; completed S0 passed (at 7a5b990) the third-party review of `line_plan.md`
+§6 D2 on 2026-08-29 (`d2_review_result.md`, round 2).
 
 An earlier version of this document deferred those "to the board-authorised work" while the
 rest of the repository described this stage as finished. That was a contradiction with the
@@ -596,21 +599,22 @@ honestly:
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
-| **§8a** | **technically resolved; independently reviewed: NO** |
+| **§8a** | **technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)** |
 | **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |
-| **S0** | **NOT complete** |
+| **S0** | **complete at 7a5b990 (D2 PASS)** |
 
 | | |
 |---|---|
 | S0a scope | the host-only derivation |
 | S0b scope | the runner, one `BoardSession` carrying one identity and one epoch, and their tests |
-| why S0 is open | completed S0 (§8a included) awaits the third-party review `line_plan.md` §6 D2 requires; S0b's own non-author cross-review is done at bde1d07 |
+| why S0 is complete | at 7a5b990 every deliverable is reviewed: S0a cross-reviewed (8cb544b), S0b cross-reviewed by a non-author (bde1d07), and completed S0 including §8a reviewed by a third party (D2, 7a5b990) |
 
 `docs/pcap_probe_spec.md` §2 carries the same split, so the two documents agree.
 
 **§8a was that precondition and it is now resolved** — the sequence is pinned rather than
 left to the operator, and the losing reading is retained only as a named alternative for a
-new run. The resolution is **technically settled but not independently reviewed**: every
-commit was cross-reviewed by the other co-author, and neither co-author can supply the
-independent review §8 requires. What remains between here and S0 is **S0b**, and an
-independent review of §8a.
+new run. Until 2026-08-29 the resolution was **technically settled but not independently
+reviewed**: every commit was cross-reviewed by the other co-author, and neither co-author
+could supply the independent review §8 requires. **That review has now happened** — the D2
+third-party review (Gemini 3.1 Pro, `d2_review_result.md`) answered Q1 on §8a with OK in
+round 1 and gave S0 as a whole PASS in round 2 at `7a5b990`. Independently reviewed: PASS.

@@ -5,14 +5,14 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a passed at `8cb544b`; §8a technically resolved, not independently reviewed; S0b cross-reviewed
+## Status — S0a passed at `8cb544b`; §8a and S0b reviewed; S0 complete at `7a5b990` (D2 PASS)
 
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
-| **§8a** | **technically resolved; independently reviewed: NO** |
+| **§8a** | **technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)** |
 | **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |
-| **S0** | **NOT complete** |
+| **S0** | **complete at 7a5b990 (D2 PASS)** |
 
 | | |
 |---|---|
@@ -31,14 +31,18 @@ unless a ruling file naming board `17A6` exists, and it consumes that ruling on 
 open a port. The imported specification describes stages that have not been authorised,
 and no ruling has been issued.
 
-**S0 is not complete and this repository does not claim it is.** The specification's S0
-includes writing the runner and the single `BoardSession` that carries one identity and one
-epoch across loader and runner; those are S0b, written at `4e2c032` under the host-only
+**S0 is complete at 7a5b990 (D2 PASS, 2026-08-29).** The specification's S0 includes
+writing the runner and the single `BoardSession` that carries one identity and one epoch
+across loader and runner; those are S0b, written at `4e2c032` under the host-only
 authorisation in [`docs/line_plan.md`](docs/line_plan.md) §6 D4 and **cross-reviewed by a
-non-author over three rounds, passing at `bde1d07`** (2026-08-29). S0 is still not
-complete: [`docs/line_plan.md`](docs/line_plan.md) §6 D2 requires a third-party review of
-completed S0 as a whole — including §8a, which neither co-author can review — before any
-board ruling is sought. The split is
+non-author over three rounds, passing at `bde1d07`**. The third-party review that
+[`docs/line_plan.md`](docs/line_plan.md) §6 D2 requires of completed S0 as a whole —
+including §8a, which neither co-author could review — was performed by Gemini 3.1 Pro
+against `873bf6e`/`7a5b990` and is recorded verbatim in
+[`docs/d2_review_result.md`](docs/d2_review_result.md): round 1 HOLD (two defects), round 2
+**PASS** (defect 1 withdrawn by the reviewer as uncited; defect 2 resolved by
+documentation). **S0 complete does not authorise a board ruling**: S1–S3 remain a separate,
+whole-of-probe owner decision. The split is
 recorded in [`docs/pcap_probe_spec.md`](docs/pcap_probe_spec.md) §2a, in the governing
 document rather than in a status line.
 

@@ -691,7 +691,10 @@ class ScopeIsStatedHonestly(unittest.TestCase):
         fired on "S0 is NOT complete", because the negation sits inside the match rather
         than before it. The window therefore spans the match.
         """
-        allowed = ("not", "NOT", "only when", "cannot", "calling", "described", "awaits")
+        # "7a5b990" is the D2 anchor: a completion claim is honest only when it names the
+        # reviewed commit (docs/d2_review_result.md, round 2 PASS, 2026-08-29).
+        allowed = ("not", "NOT", "only when", "cannot", "calling", "described", "awaits",
+                   "7a5b990")
         pattern = re.compile(
             r"\bS0\b(?![ab])(?:\W+\w+){0,3}?\W+"
             r"(?:complete|completed|delivered|passed)\b")
@@ -725,13 +728,13 @@ class ScopeIsStatedHonestly(unittest.TestCase):
         self.assertRegex(flat, r"runner is written at 4e2c032")
         self.assertRegex(flat, r"cross-reviewed by a non-author, PASS at bde1d07")
 
-    def test_the_stage_table_says_s0_is_not_complete(self):
+    def test_the_stage_table_says_s0_is_complete_at_the_d2_anchor(self):
         """Parse the row rather than scan the prose: the row is the load-bearing claim."""
         row = re.search(r"^\|\s*\*\*S0\*\*\s*\|\s*(.+?)\s*\|\s*$",
                         self.SEQ, re.M)
         self.assertIsNotNone(row, "the stage table has no S0 row")
-        self.assertRegex(row.group(1), r"NOT complete",
-                         f"the S0 row claims {row.group(1)!r}")
+        self.assertIn("complete at 7a5b990 (D2 PASS)", row.group(1),
+                      f"the S0 row claims {row.group(1)!r}")
 
     def test_the_stage_table_lists_s0b_as_written_and_cross_reviewed(self):
         row = re.search(r"^\|\s*\*\*S0b[^|]*\|\s*(.+?)\s*\|\s*$", self.SEQ, re.M)
@@ -1254,8 +1257,9 @@ class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
     HISTORY = ("was open", "was right then", "An earlier", "earlier version", "was wrong",
                "had been", "before review", "previously", "no longer")
     # "awaiting review" wording was briefly treated as stale, while a PASS stood that has
-    # since been withdrawn.  §8a is technically resolved and NOT independently reviewed, so
-    # saying it awaits review is accurate again, not stale.  Only "open/unresolved" is.
+    # since been withdrawn.  On 2026-08-29 the D2 third-party review (Gemini 3.1 Pro,
+    # docs/d2_review_result.md) passed at 7a5b990; the history below stays as history.
+    # Only "open/unresolved" is stale.
     STALE_8A_PATTERN = (
         r"8a[^.]{0,80}(?:UNRESOLVED|is open|unresolved)|"
         r"[Tt]wo (?:items|questions) [^.]{0,30}UNRESOLVED"
@@ -1319,19 +1323,23 @@ class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
             for m in claim.finditer(flat):
                 window = flat[max(0, m.start() - 100):m.end() + 60]
                 with self.subTest(doc=name, at=m.group(0)[:40]):
+                    # Since 2026-08-29 the claim is TRUE, but only with its anchor: the D2
+                    # review at 7a5b990 (docs/d2_review_result.md). Unanchored, it is the
+                    # withdrawn-PASS mistake again.
                     self.assertRegex(
-                        window, r"withdrawn|An earlier|earlier version|was recorded|"
-                                r"\bNOT\b|\bno\b",
+                        window, r"7a5b990|d2_review_result|withdrawn|An earlier|"
+                                r"earlier version|was recorded|\bNOT\b|\bno\b",
                         f"{name} claims §8a was independently reviewed: ...{window}...")
 
-    def test_the_8a_section_records_why_review_is_still_owed(self):
+    def test_the_8a_section_records_the_review_history_and_the_d2_outcome(self):
         seq = " ".join(
             (REPO_ROOT / "docs/s0_derived_sequence.md").read_text()
             .replace("*", " ").split())
-        self.assertIn("Independently reviewed: NO", seq)
+        self.assertIn("Independently reviewed: PASS", seq)
+        self.assertIn("7a5b990", seq)
         self.assertRegex(
             seq, r"no party independent of both has reviewed the .8a delta as a whole",
-            "the reason the gate is not satisfied must stay on the record")
+            "the history of why the gate was not satisfied must stay on the record")
         self.assertRegex(seq, r"withdrawn",
                          "the withdrawn PASS must stay visible as withdrawn")
 
@@ -1380,9 +1388,9 @@ class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
 CANONICAL_STATUS_TABLE = (
     ("gate", "state"),
     ("S0a", "PASS at 8cb544b"),
-    ("§8a", "technically resolved; independently reviewed: NO"),
+    ("§8a", "technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)"),
     ("S0b", "written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS"),
-    ("S0", "NOT complete"),
+    ("S0", "complete at 7a5b990 (D2 PASS)"),
 )
 STATUS_KEYS = tuple(k for k, _ in CANONICAL_STATUS_TABLE[1:])
 
@@ -1454,9 +1462,9 @@ CANONICAL_SOURCE_BLOCK = (
     "| gate | state |\n"
     "|---|---|\n"
     "| **S0a** | **PASS at `8cb544b`** |\n"
-    "| **§8a** | **technically resolved; independently reviewed: NO** |\n"
+    "| **§8a** | **technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)** |\n"
     "| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |\n"
-    "| **S0** | **NOT complete** |\n"
+    "| **S0** | **complete at 7a5b990 (D2 PASS)** |\n"
 )
 
 
@@ -1466,7 +1474,7 @@ def status_problems(text: str) -> list[str]:
     Two independent checks, because they close different holes.  The parser check is
     what a reader of the *rendered* document sees.  The literal check is what a reader of
     the *source* sees: GFM silently discards a cell beyond the header's column count, so
-    `| **S0** | **NOT complete** | see below |` renders as canonical while the source says
+    `| **S0** | **complete at 7a5b990 (D2 PASS)** | see below |` renders as canonical while the source says
     something else.
     """
     problems: list[str] = []
@@ -1554,9 +1562,9 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
 
     GOOD = ("| gate | state |\n|---|---|\n"
             "| **S0a** | **PASS at `8cb544b`** |\n"
-            "| **§8a** | **technically resolved; independently reviewed: NO** |\n"
+            "| **§8a** | **technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)** |\n"
             "| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |\n"
-            "| **S0** | **NOT complete** |\n")
+            "| **S0** | **complete at 7a5b990 (D2 PASS)** |\n")
 
     def test_the_control_table_is_accepted(self):
         self.assertEqual(status_problems(self.GOOD), [])
@@ -1591,7 +1599,7 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         bad = (self.GOOD
                .replace("| **S0a** | **PASS at `8cb544b`** |",
                         "| **S0a** | **PASS at `8cb544b`**; pending non-author review |")
-               .replace("| **§8a** | **technically resolved; independently reviewed: NO** |",
+               .replace("| **§8a** | **technically resolved; independently reviewed: PASS (D2, Gemini 3.1 Pro, at 7a5b990)** |",
                         "| **§8a** | **technically resolved; independently reviewed: NO**; PASS at 77e29a5 |")
                .replace("| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS** |",
                         "| **S0b** | **written at 4e2c032; cross-reviewed by a non-author (ChatGPT) at bde1d07: PASS**; active |"))
@@ -1621,8 +1629,8 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         The rendered table is canonical; the source is not. The literal check is what
         refuses it, and this test is why that check exists.
         """
-        bad = self.GOOD.replace("| **S0** | **NOT complete** |",
-                                "| **S0** | **NOT complete** | see below |")
+        bad = self.GOOD.replace("| **S0** | **complete at 7a5b990 (D2 PASS)** |",
+                                "| **S0** | **complete at 7a5b990 (D2 PASS)** | see below |")
         self.assertIsNotNone(status_table(bad), "GFM truncates: the parser sees no change")
         self.assertEqual(status_table(bad), [tuple(r) for r in CANONICAL_STATUS_TABLE])
         self.assertTrue(status_problems(bad), "the source-literal check must refuse it")
@@ -1702,8 +1710,8 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         while neither described the same artefact.
         """
         malformed = self.GOOD.replace(
-            "| **S0** | **NOT complete** |",
-            "| **S0** | **NOT complete** | actually done |")
+            "| **S0** | **complete at 7a5b990 (D2 PASS)** |",
+            "| **S0** | **complete at 7a5b990 (D2 PASS)** | actually done |")
         bad = malformed + "\n~~~text\n" + self.GOOD + "~~~\n"
         self.assertEqual(bad.count(CANONICAL_SOURCE_BLOCK), 1,
                          "the fenced decoy must isolate the old whole-document count hole")
@@ -2004,16 +2012,16 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
             # The residual limit, stated rather than papered over: no finite perturbation
             # set can exclude an assertion that reimplements the canonical equivalence.
             block = CANONICAL_SOURCE_BLOCK.encode("utf-8")
-            s0_row = b"| **S0** | **NOT complete** |\n"
+            s0_row = b"| **S0** | **complete at 7a5b990 (D2 PASS)** |\n"
             delimiter = b"|---|---|\n"
             block_variants = {
                 "CRLF": block.replace(b"\n", b"\r\n"),
                 "tab separators": block.replace(
-                    s0_row, b"| **S0**\t|\t**NOT complete** |\n"),
+                    s0_row, b"| **S0**\t|\t**complete at 7a5b990 (D2 PASS)** |\n"),
                 "trailing spaces": block.replace(
-                    s0_row, b"| **S0** | **NOT complete** |  \n"),
+                    s0_row, b"| **S0** | **complete at 7a5b990 (D2 PASS)** |  \n"),
                 "omitted trailing pipe": block.replace(
-                    s0_row, b"| **S0** | **NOT complete**\n"),
+                    s0_row, b"| **S0** | **complete at 7a5b990 (D2 PASS)**\n"),
                 "alignment colon": block.replace(delimiter, b"|:---|---|\n"),
             }
             variant_names = ("CRLF", "tab separators", "trailing spaces",

@@ -258,3 +258,10 @@ review of completed S0 (D2) → application for the existing S1–S3 whole-of-pr
 ruling.** D1 waits for P2/P3. The status table is unchanged by this document: S0 is not
 complete, S0b is authorised but not started, S1–S3 are not authorised, and the board has
 not been touched.
+
+**Dated note, 2026-08-29 (later the same day):** S0b was written (`4e2c032`) and
+cross-reviewed (`bde1d07`); the D2 third-party review was performed by an LLM (Gemini 3.1
+Pro) per the owner's ruling that the third party may be an LLM, and passed at `7a5b990`
+(`d2_review_result.md`). **S0 is therefore complete.** The next step in the order above is
+the owner's decision on the S1–S3 whole-of-probe board ruling; nothing in this note takes
+it.
