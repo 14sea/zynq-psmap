@@ -177,6 +177,21 @@ not the stage label, is what it enforces.
 | `docs/p1_spec.md` |
 | `tests/test_p1.py` |
 | `docs/p1_review_result.md` |
+| `evidence/p1_17A6_2026-08-29-01/P1_0_baseline.json` |
+| `evidence/p1_17A6_2026-08-29-01/P1_1_write_A.json` |
+| `evidence/p1_17A6_2026-08-29-01/P1_2_read_A_0.json` |
+| `evidence/p1_17A6_2026-08-29-01/P1_2_read_A_1.json` |
+| `evidence/p1_17A6_2026-08-29-01/P1_3_write_B.json` |
+| `evidence/p1_17A6_2026-08-29-01/P1_4_read_B_0.json` |
+| `evidence/p1_17A6_2026-08-29-01/P1_4_read_B_1.json` |
+| `evidence/p1_17A6_2026-08-29-01/jtag.json` |
+| `evidence/p1_17A6_2026-08-29-01/jtag.tcl` |
+| `evidence/p1_17A6_2026-08-29-01/sealed.json` |
+| `evidence/p1_17A6_2026-08-29-01/summary.json` |
+| `evidence/p1_17A6_2026-08-29-01/ymodem.log` |
+| `evidence/p1_17A6_2026-08-29-01/ruling.json` |
+| `evidence/p1_17A6_2026-08-29-01/ruling.json.consumed` |
+| `docs/p1_findings.md` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

@@ -1,0 +1,9 @@
+{
+  "P1_0_baseline.json": "63da5e48a49472f7b98d8ae07254eda740a1084ec5e9214bfee7316342177b5d",
+  "P1_1_write_A.json": "282f198378538002ec698e92f8ad9794f6b583afece090418d5cadd857feceee",
+  "P1_2_read_A_0.json": "bf40c818f9c86ce32c9f6e6c8de952bafd9f7755be137134f4c195f66bc7dc42",
+  "P1_2_read_A_1.json": "c82422c5fb7bbb9900b1bf5773f8dd91406f134849ea0b2a87b5bdb668037e33",
+  "P1_3_write_B.json": "e4171e55b5bc4b52aae40edb9092bc59c04163debaac4bdddf16333ad2c0af36",
+  "P1_4_read_B_0.json": "b668f7c52045397f288e36fbb253eaaf5301955b1ec6b6b4873107a504e1fe06",
+  "P1_4_read_B_1.json": "9e24243e8cbbdfe1422a8c5119680890f510aa88cce007cc43a626303e5a6ed8"
+}
