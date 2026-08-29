@@ -1796,7 +1796,7 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         self.assertNotIn("read_text", attrs)
 
     def test_the_repository_documents_go_through_that_entry_point(self):
-        """Not merely "no read_text": the byte-preserving helper must be what is used."""
+        """Structural companion: the byte-preserving helper must be present."""
         tree = ast.parse(Path(__file__).read_text())
         cls = next(n for n in ast.walk(tree)
                    if isinstance(n, ast.ClassDef)
@@ -1806,6 +1806,28 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         called = {n.func.id for n in ast.walk(fn)
                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
         self.assertIn("status_problems_from_path", called)
+
+    def test_the_repository_document_assertion_consumes_raw_bytes(self):
+        """Drive the real document test; a helper call may not be dead evidence.
+
+        The AST presence check can be satisfied by calling `status_problems_from_path`
+        and discarding its result, then feeding the assertion text read through a
+        newline-translating alias.  Replace the real test instance's document set with a
+        controlled file so the assertion's actual data flow, not a function name, decides.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "status.md"
+            case = type(self)("test_every_document_carries_the_canonical_table")
+            # Set the instance dictionary directly so this guard is not itself mistaken
+            # for another method that consumes `self.DOCS` by the structural companion.
+            case.__dict__["DOCS"] = {"controlled.md": path}
+
+            path.write_bytes(self.GOOD.encode("utf-8"))
+            case.test_every_document_carries_the_canonical_table()
+
+            path.write_bytes(self.GOOD.replace("\n", "\r\n").encode("utf-8"))
+            with self.assertRaisesRegex(AssertionError, "outside the line text"):
+                case.test_every_document_carries_the_canonical_table()
 
     def test_the_difference_branch_cannot_report_nothing(self):
         """Structural: no path through the branch may leave `problems` unchanged."""
