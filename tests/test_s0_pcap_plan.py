@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from markdown_it import MarkdownIt
@@ -1344,6 +1345,7 @@ def _norm(cell: str) -> str:
 # re-derived here.  A blockquoted table is likewise not a top-level table and does not
 # count -- which makes a fenced or quoted canonical table a *missing* table, fail-closed.
 _MD = MarkdownIt("commonmark").enable("table")   # commonmark + GFM tables, no linkify
+P_TESTMOD = sys.modules[__name__]                # for patching _MD in a test
 
 
 def top_level_tables(
@@ -1422,7 +1424,7 @@ def status_problems(text: str) -> list[str]:
     if source != CANONICAL_SOURCE_BLOCK:
         expected_lines = CANONICAL_SOURCE_BLOCK.splitlines()
         actual_lines = source.splitlines()
-        problems += [
+        line_diffs = [
             f"source row {i}: expected "
             f"{expected_lines[i] if i < len(expected_lines) else None!r}, found "
             f"{actual_lines[i] if i < len(actual_lines) else None!r}"
@@ -1430,6 +1432,15 @@ def status_problems(text: str) -> list[str]:
             if (expected_lines[i] if i < len(expected_lines) else None)
             != (actual_lines[i] if i < len(actual_lines) else None)
         ]
+        problems += line_diffs
+        if not line_diffs:
+            # `splitlines()` drops the terminators, so a difference living only in them
+            # -- CRLF, a lone CR, a missing final newline -- produced an empty diff and
+            # `status_problems` returned []: the branch detected a difference and then
+            # reported none.  Entering this branch must never be silent.
+            problems.append(
+                "the status table's source differs from the canonical block outside "
+                f"the line text (terminators or final newline): {source!r}")
     want = [tuple(r) for r in CANONICAL_STATUS_TABLE]
     # Both checks are reported, never short-circuited: the row-level diff is the useful
     # diagnostic and a literal mismatch must not hide it.
@@ -1637,6 +1648,75 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         problems = status_problems(bad)
         self.assertTrue(problems, "parser and literal evidence came from different tables")
         self.assertIn("source row 5", " ".join(problems))
+
+    def test_a_table_without_a_source_map_is_discarded(self):
+        """The `span is not None` filter, exercised rather than assumed.
+
+        With markdown-it 3.0.0 every real table carries a map, so nothing reached that
+        branch and removing it changed no test.  A table whose source span is unknown
+        cannot be tied back to the artefact being checked, so it must not count -- and
+        that has to be shown, not asserted in a comment.
+        """
+        from markdown_it.token import Token
+
+        def _token(t, tag, nesting, content=""):
+            tok = Token(t, tag, nesting)
+            tok.content = content
+            tok.map = None
+            return tok
+
+        stub_tokens = [
+            _token("table_open", "table", 1),
+            _token("tr_open", "tr", 1),
+            _token("inline", "", 0, "gate"),
+            _token("inline", "", 0, "state"),
+            _token("tr_close", "tr", -1),
+            _token("table_close", "table", -1),
+        ]
+
+        class _StubMd:
+            @staticmethod
+            def parse(_text):
+                return stub_tokens
+
+        with unittest.mock.patch.object(P_TESTMOD, "_MD", _StubMd):
+            self.assertEqual(top_level_tables("irrelevant"), [],
+                             "a map-less table must not be counted")
+            self.assertIsNone(status_table_artifact("irrelevant"))
+            self.assertIn("no single top-level",
+                          " ".join(status_problems("irrelevant")))
+
+    def test_a_terminator_only_difference_is_still_reported(self):
+        """Entering the "source differs" branch must never produce an empty report.
+
+        `splitlines()` strips terminators, so CRLF, a lone CR and a missing final
+        newline each made `source != CANONICAL_SOURCE_BLOCK` true while the row diff came
+        out empty -- and an empty problem list is a pass.
+        """
+        cases = {
+            "CRLF": self.GOOD.replace("\n", "\r\n"),
+            "lone CR": self.GOOD.replace("\n", "\r"),
+            "no final newline": self.GOOD.rstrip("\n"),
+        }
+        for name, text in cases.items():
+            with self.subTest(case=name):
+                self.assertNotEqual(text, self.GOOD, "the variant did not apply")
+                problems = status_problems(text)
+                self.assertTrue(problems, f"{name} was accepted")
+                self.assertIn("outside the line text", " ".join(problems))
+
+    def test_the_difference_branch_cannot_report_nothing(self):
+        """Structural: no path through the branch may leave `problems` unchanged."""
+        tree = ast.parse(Path(__file__).read_text())
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == "status_problems")
+        branch = next(
+            n for n in ast.walk(fn)
+            if isinstance(n, ast.If) and "CANONICAL_SOURCE_BLOCK" in ast.unparse(n.test))
+        guarded = [n for n in ast.walk(branch)
+                   if isinstance(n, ast.If) and "line_diffs" in ast.unparse(n.test)]
+        self.assertTrue(guarded,
+                        "the branch must have a fallback when no row diff is produced")
 
     def test_the_parser_is_a_gfm_parser_not_a_line_scanner(self):
         """AST again: a substring ban matches its own assertion (second time)."""
