@@ -299,6 +299,33 @@ class SessionIdentityAndEpoch(unittest.TestCase):
             run_s1(b)
         self.assertIn("after 3 attempts", str(cm.exception))
 
+    def test_session_refusals_are_never_answered_with_a_reread(self):
+        """Owner review of ca94fed: only a malformed reply is re-read. A banner, a prompt
+        change or a missing prompt is a session refusal — it ends the epoch and propagates,
+        and the md.l is NOT re-sent (a re-send after a reboot would run in a dead epoch)."""
+        cmd = f"md.l {pp.DST_BUF:#010x} 0xca"
+        cases = {
+            "banner": lambda b: b.banner_on.add(cmd),
+            "prompt_change": lambda b: setattr(b, "prompt", b"zynq-uboot> "),
+            "no_prompt": lambda b: setattr(b, "prompt", b""),
+        }
+        expected_kind = {"banner": "soft_reset", "prompt_change": "prompt_mode_change",
+                         "no_prompt": "timeout"}
+        for name, arm in cases.items():
+            with self.subTest(case=name):
+                b = FakeUBoot()
+                s = session_for(b)
+                s.verify_identity()                  # mode "Zynq" established, identity held
+                arm(b)
+                sent_before = len(b.sent)
+                with self.assertRaises(bsn.SessionRefusal):
+                    s.read_command(cmd, pp.DST_BUF, pp.READBACK_WORDS)
+                self.assertEqual(len(b.sent) - sent_before, 1, f"{name}: md.l was re-sent")
+                self.assertEqual(s.disruptions[-1]["kind"], expected_kind[name])
+                self.assertEqual(s.epoch, 1)
+                self.assertIsNone(s.identity)
+                self.assertEqual(s.rereads, [])
+
     def test_reread_is_md_only(self):
         s = session_for(FakeUBoot())
         with self.assertRaises(bsn.SessionRefusal):

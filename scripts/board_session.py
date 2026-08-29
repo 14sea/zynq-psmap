@@ -345,14 +345,19 @@ class BoardSession:
         attempts = 0
         while True:
             attempts += 1
+            # The transport step is NOT inside the try: a banner, a prompt-mode change or a
+            # missing prompt is a session refusal that has already ended the epoch, and it
+            # must propagate — never be answered with another md.l (owner review of ca94fed).
+            raw = self.command(cmd, timeout)
             try:
-                words = parse_md(self.command(cmd, timeout), addr, count)
-                if attempts > 1:
-                    self.rereads.append({"command": cmd, "attempts": attempts})
-                return words
-            except SessionRefusal as exc:
+                words = parse_md(raw, addr, count)
+            except SessionRefusal as malformed:
                 if attempts > rereads:
-                    raise SessionRefusal(f"{exc} (after {attempts} attempts)") from None
+                    raise SessionRefusal(f"{malformed} (after {attempts} attempts)") from None
+                continue
+            if attempts > 1:
+                self.rereads.append({"command": cmd, "attempts": attempts})
+            return words
 
     def read_word(self, addr: int) -> int:
         return self.read_words(addr, 1)[0]
