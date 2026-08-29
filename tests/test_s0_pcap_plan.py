@@ -1763,6 +1763,7 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         self.assertEqual(
             sorted(fn.name for fn in consumers),
             ["test_every_document_carries_the_canonical_table",
+             "test_the_real_documents_are_checked_byte_for_byte",
              "test_the_three_documents_agree_with_each_other"],
             "the set of methods reading the repository documents has changed")
         offenders = sorted({
@@ -1828,6 +1829,70 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
             path.write_bytes(self.GOOD.replace("\n", "\r\n").encode("utf-8"))
             with self.assertRaisesRegex(AssertionError, "outside the line text"):
                 case.test_every_document_carries_the_canonical_table()
+
+    # The documents the real test iterates over, replicated into a throwaway repo so a
+    # perturbed copy can be checked without touching the working tree.
+    _INGRESS_FIXTURE = ("README.md", "docs/pcap_probe_spec.md",
+                        "docs/s0_derived_sequence.md", "docs/s0_ug585_discharge.md",
+                        "scripts/pcap_probe_plan.py", "requirements.txt",
+                        "tests/test_s0_pcap_plan.py")
+
+    def _run_document_test_in(self, root: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "tests/test_s0_pcap_plan.py",
+             "TheGateStatusIsPinnedAcrossEveryDocument."
+             "test_every_document_carries_the_canonical_table"],
+            cwd=root, capture_output=True, text=True, timeout=120,
+            env={**os.environ, "PSMAP_SUITE_COUNT_CHILD": "1"})
+
+    def test_the_real_documents_are_checked_byte_for_byte(self):
+        """End-to-end on the real `DOCS` mapping, in a throwaway copy of the repository.
+
+        Substituting the test instance's documents proves the assertion consumes bytes
+        for *that* fixture, and an edit can branch on the fixture: keying on
+        `len(self.DOCS)` or on whether the path lies under `REPO_ROOT` sends the
+        controlled file down the byte-preserving path and the real documents down a
+        newline-translating alias, and both escape a substitution-based guard.  Nothing
+        escapes perturbing the real documents themselves.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in self._INGRESS_FIXTURE:
+                dst = root / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes((REPO_ROOT / rel).read_bytes())
+
+            control = self._run_document_test_in(root)
+            self.assertEqual(control.returncode, 0,
+                             f"the unperturbed copy must pass:\n{control.stderr[-600:]}")
+
+            # Named, not inlined: emptying the loop would otherwise disarm the check
+            # while every assertion inside it still looked present.
+            perturbed = ("README.md", "docs/pcap_probe_spec.md",
+                         "docs/s0_derived_sequence.md")
+            self.assertEqual(
+                sorted(perturbed),
+                sorted(str(path.relative_to(REPO_ROOT)) for path in self.DOCS.values()),
+                "every document the real test reads must be perturbed here")
+            # Recorded as it happens: pinning the tuple does not prove the loop ran, and
+            # `for rel in ():` left every assertion inside it apparently present.
+            checked: list[str] = []
+            for rel in perturbed:
+                checked.append(rel)
+                target = root / rel
+                original = target.read_bytes()
+                try:
+                    target.write_bytes(original.replace(b"\n", b"\r\n"))
+                    result = self._run_document_test_in(root)
+                    with self.subTest(document=rel):
+                        self.assertNotEqual(
+                            result.returncode, 0,
+                            f"a CRLF {rel} was accepted by the real document test")
+                        self.assertIn("outside the line text", result.stderr)
+                finally:
+                    target.write_bytes(original)
+            self.assertEqual(checked, list(perturbed),
+                             "the perturbation loop did not run over every document")
 
     def test_the_difference_branch_cannot_report_nothing(self):
         """Structural: no path through the branch may leave `problems` unchanged."""
