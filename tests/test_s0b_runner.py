@@ -261,6 +261,49 @@ class SessionIdentityAndEpoch(unittest.TestCase):
         self.assertIsNone(s.identity)
         self.assertTrue(any(e["command"].startswith("<unsolicited") for e in s.log))
 
+    def test_a_dropped_md_line_is_reread_and_counted(self):
+        """pcap_probe_spec §2b: one malformed 202-word reply is re-read (same md.l), recorded."""
+        b = FakeUBoot()
+        real = b.reply
+        state = {"dropped": False}
+
+        def drop_once(line):
+            out = real(line)
+            if line == f"md.l {pp.DST_BUF:#010x} 0xca" and not state["dropped"]:
+                state["dropped"] = True
+                lines = out.split(b"\r\n")
+                del lines[5]                       # one md line vanishes, as on the board
+                out = b"\r\n".join(lines)
+            return out
+        b.reply = drop_once
+        rec, s = run_s1(b)
+        self.assertEqual(rec["verdict"], "PASS")
+        self.assertEqual(len(rec["transport_rereads"]), 1)
+        self.assertEqual(rec["transport_rereads"][0]["attempts"], 2)
+        readouts = [c for c in b.sent if c == f"md.l {pp.DST_BUF:#010x} 0xca"]
+        self.assertEqual(len(readouts), 3, "sentinel-verify + readout + one re-read")
+        self.assertEqual(len([c for c in b.sent if c.startswith(f"mw.l {DMA['DMA_DEST_LEN']:#010x}")]), 3,
+                         "a re-read must not re-issue any DMA")
+
+    def test_a_persistently_malformed_reply_is_refused_after_three_attempts(self):
+        b = FakeUBoot()
+        real = b.reply
+
+        def drop_always(line):
+            out = real(line)
+            if line == f"md.l {pp.DST_BUF:#010x} 0xca":
+                lines = out.split(b"\r\n"); del lines[5]; out = b"\r\n".join(lines)
+            return out
+        b.reply = drop_always
+        with self.assertRaises(bsn.SessionRefusal) as cm:
+            run_s1(b)
+        self.assertIn("after 3 attempts", str(cm.exception))
+
+    def test_reread_is_md_only(self):
+        s = session_for(FakeUBoot())
+        with self.assertRaises(bsn.SessionRefusal):
+            s.read_command("mw.l 0xf800700c 0x4 1", 0xF800700C, 1)
+
     def test_a_missing_prompt_ends_the_epoch(self):
         b = FakeUBoot(prompt=b"")
         s = session_for(b)

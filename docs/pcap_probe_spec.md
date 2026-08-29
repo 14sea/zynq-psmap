@@ -129,6 +129,22 @@ An earlier draft of `stop_loss.md` said authorisation was "per-stage, not blanke
 was wrong and contradicted the snapshot's §8; it has been corrected. Both documents now say
 the same thing, and `tests/test_owner_spec.py` checks that they keep saying it.
 
+### 2b. Console-transport faults are not observations — re-reading `md.l` (added 2026-08-29)
+
+`evidence/p2_17A6_2026-08-29-01`: the seventh 202-word readout of a P2 run arrived with
+50 of its 51 `md.l` lines (one dropped on the CH340/usbipd path), the session refused
+fail-closed, and the ruling was consumed with no verdict — 1 drop in 32 such readouts that
+day. The refusal was right; losing a chain to it was not proportionate.
+
+**Pinned:** a malformed `md.l` reply (line address or word count wrong) is a fault of the
+console transport. For `md.l` **only** — never `mw.l`, never a DMA register write, never a
+configuration command — the runner may re-send the **identical** `md.l` up to **two** more
+times. Every raw reply is preserved in the UART log; each re-read is recorded per stage
+(`transport_rereads`) and in the summary; adjudication uses only a complete reply. This is
+not a retry in §7.4's sense: no DMA is re-issued, nothing is written, and the DDR bytes
+being re-read are the ones the DMA already left. A reply that is still malformed after
+three attempts is a refusal, as before.
+
 ## 3. The pinned positive control, re-derived here
 
 Re-derived in this repository against the imported carrier

@@ -259,6 +259,7 @@ class BoardSession:
         self.epoch = 0
         self.disruptions: list[dict] = []
         self.log: list[dict] = []          # every command and reply, preserved (§10)
+        self.rereads: list[dict] = []      # md.l replies that had to be re-read (transport)
         self._identity: dict | None = None
         self._prompt_mode: str | None = None
         self.plmark: str | None = None
@@ -328,9 +329,30 @@ class BoardSession:
     def read_words(self, addr: int, count: int, timeout: float = 3.0) -> list[int]:
         return self.read_command(f"md.l {addr:#010x} {count:#x}", addr, count, timeout)
 
-    def read_command(self, cmd: str, addr: int, count: int, timeout: float = 3.0) -> list[int]:
-        """Send an `md.l` line exactly as given (the plan's text, not a reformatting)."""
-        return parse_md(self.command(cmd, timeout), addr, count)
+    MD_REREADS = 2      # evidence/p2_17A6_2026-08-29-01: one dropped line in 32 readouts
+
+    def read_command(self, cmd: str, addr: int, count: int, timeout: float = 3.0,
+                     rereads: int = MD_REREADS) -> list[int]:
+        """Send an `md.l` line exactly as given (the plan's text, not a reformatting).
+
+        A malformed reply (line address or word count wrong) is a console-transport fault,
+        not an observation: the identical `md.l` may be re-sent up to `rereads` times. This
+        is a memory read of DDR — no DMA is re-issued, nothing is written — so it is not a
+        retry in §7.4's sense. Every raw reply stays in the log; the count is recorded.
+        """
+        if not cmd.startswith("md.l "):
+            raise SessionRefusal("read_command is for md.l only")
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                words = parse_md(self.command(cmd, timeout), addr, count)
+                if attempts > 1:
+                    self.rereads.append({"command": cmd, "attempts": attempts})
+                return words
+            except SessionRefusal as exc:
+                if attempts > rereads:
+                    raise SessionRefusal(f"{exc} (after {attempts} attempts)") from None
 
     def read_word(self, addr: int) -> int:
         return self.read_words(addr, 1)[0]

@@ -44,7 +44,7 @@ class _Observer:
     def word(self, cmd: str, addr: int) -> int:
         if cmd not in self.allowed:
             raise bsn.SessionRefusal(f"not a pinned observe/fclk read: {cmd!r}")
-        return bsn.parse_md(self.session.command(cmd, 3.0), addr, 1)[0]
+        return self.session.read_command(cmd, addr, 1)[0]      # md.l only; re-read policy §2b
 
     def sample(self) -> dict[int, int]:
         return {a: self.word(f"md.l {a:#010x} 1", a) for a in ob.OBSERVABLE}
@@ -151,6 +151,7 @@ def run_p2(session: bsn.BoardSession, out_dir: Path, ruling: dict, table: dict |
     finally:
         summary["uart_log"] = session.log
         summary["disruptions"] = session.disruptions
+        summary["transport_rereads"] = session.rereads
         summary["epoch_final"] = session.epoch
         pr.write_record(out_dir, "summary", summary)
     return summary

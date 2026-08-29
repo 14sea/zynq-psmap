@@ -196,6 +196,20 @@ not the stage label, is what it enforces.
 | `scripts/p2_observe.py` |
 | `scripts/p2_runner.py` |
 | `tests/test_p2.py` |
+| `evidence/p2_17A6_2026-08-29-01/reading.md` |
+| `evidence/p2_17A6_2026-08-29-01/P2_0_fclk.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_1_baseline.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_2_control.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_3_read_0.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_3_read_1.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_3_read_2.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_3_read_3.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_3_read_4.json` |
+| `evidence/p2_17A6_2026-08-29-01/P2_3_read_5.json` |
+| `evidence/p2_17A6_2026-08-29-01/summary.json` |
+| `evidence/p2_17A6_2026-08-29-01/ymodem.log` |
+| `evidence/p2_17A6_2026-08-29-01/ruling.json` |
+| `evidence/p2_17A6_2026-08-29-01/ruling.json.consumed` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

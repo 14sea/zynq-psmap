@@ -243,6 +243,7 @@ def run_p1(session: bsn.BoardSession, out_dir: Path, ruling: dict, table: dict |
     finally:
         summary["uart_log"] = session.log
         summary["disruptions"] = session.disruptions
+        summary["transport_rereads"] = session.rereads
         summary["epoch_final"] = session.epoch
         pr.write_record(out_dir, "summary", summary)
     return summary

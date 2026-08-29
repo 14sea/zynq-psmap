@@ -296,7 +296,9 @@ class _Sender:
         return self.session.command(cmd, timeout)
 
     def words(self, cmd: str, addr: int, count: int) -> list[int]:
-        return bsn.parse_md(self(cmd), addr, count)
+        if cmd not in self.allowed:
+            raise bsn.SessionRefusal(f"command not in the validated plan: {cmd!r}")
+        return self.session.read_command(cmd, addr, count)     # md.l only; re-read policy §2b
 
 
 def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
@@ -329,6 +331,7 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
     obs = stage["observations"]
     clear_mask, err_mask = plan["int_sts_clear_mask"], plan["int_sts_error_mask"]
     pending_stop: ProbeStop | None = None     # a payload verdict waits for the cleanup
+    rereads_before = len(session.rereads)
 
     for step in plan["uboot_script"]:
         name, cmd = step["step"], step["cmd"]
@@ -414,6 +417,7 @@ def execute_plan(capability, session: bsn.BoardSession, plan: dict, table: dict,
         else:
             raise bsn.SessionRefusal(f"the plan has a read this runner does not gate: {name}")
     stage["elapsed_s"] = round(time.time() - stage["started"], 3)
+    stage["transport_rereads"] = [r for r in session.rereads[rereads_before:]]
     if pending_stop is not None:
         raise pending_stop
     return stage
@@ -474,6 +478,7 @@ def run_probe(session: bsn.BoardSession, out_dir: Path, ruling: dict,
     finally:
         summary["uart_log"] = session.log
         summary["disruptions"] = session.disruptions
+        summary["transport_rereads"] = session.rereads
         summary["epoch_final"] = session.epoch
         write_record(out_dir, "summary", summary)
     return summary
