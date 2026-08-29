@@ -125,6 +125,7 @@ not the stage label, is what it enforces.
 | `docs/s0_derived_sequence.md` |
 | `scripts/pcap_probe_plan.py` |
 | `tests/test_s0_pcap_plan.py` |
+| `docs/line_plan.md` |
 
 ## Deliberately NOT imported
 
