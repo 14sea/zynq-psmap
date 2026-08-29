@@ -6,8 +6,12 @@
 
 Status: drafted 2026-08-29 after P1 passed (`p1_findings.md`). Implements `line_plan.md`
 §4 P2 as amended by review R5 ("an observable-specific continuity rule, not literal
-equality … a stable checksum remains equal … a matched no-read baseline/control"). Not yet
-reviewed by a non-author.
+equality … a stable checksum remains equal … a matched no-read baseline/control").
+**Owner review PASS (host-only) on 2026-08-29 at `5c4f5f1`.** Scope as ruled: a P2 PASS
+may claim only that, on this `17A6` carrier, under the specified PCAP operations, no state
+perturbation was observed in the eight pinned registers — not a general "the design kept
+computing" proof (that is P2b). Board run still needs its own `whole-of-probe P2` ruling
+and a fresh power cycle.
 
 ## 0. The one question
 

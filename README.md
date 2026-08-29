@@ -23,7 +23,7 @@ A host-only question, asked separately from the repository it came out of:
 | what blocks S0 | S0b |
 | S1–S3 (on silicon) | **PASS, run #3, 2026-08-29** — `docs/s1s3_findings.md`, `evidence/s1s3_17A6_2026-08-29-02/` |
 | P1 (post-write readback) | **PASS on `17A6`, run #1, 2026-08-29** (host-only PASS by owner review at `237d38a`) — `docs/p1_findings.md`, `evidence/p1_17A6_2026-08-29-01/` |
-| P2 (non-perturbation) | **host-only: spec + observable + runner + tests written 2026-08-29, not reviewed; no ruling** — `docs/p2_spec.md` |
+| P2 (non-perturbation) | **host-only PASS (owner review, 2026-08-29, `5c4f5f1`); board run awaits its own `whole-of-probe P2` ruling** — `docs/p2_spec.md` |
 | tests | see the command below |
 
 Nothing in this repository performs a board action without a whole-of-probe ruling.
