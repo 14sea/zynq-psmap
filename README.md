@@ -5,7 +5,7 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a `8cb544b` → S0 complete at `7a5b990` (D2 PASS); S1–S3 PASS on `17A6` (2026-08-29, run #3); P1 PASS on `17A6` (2026-08-29)
+## Status — S0a `8cb544b` → S0 complete at `7a5b990` (D2 PASS); S1–S3, P1 and P2 PASS on `17A6` (2026-08-29)
 
 | gate | state |
 |---|---|
@@ -23,7 +23,7 @@ A host-only question, asked separately from the repository it came out of:
 | what blocks S0 | S0b |
 | S1–S3 (on silicon) | **PASS, run #3, 2026-08-29** — `docs/s1s3_findings.md`, `evidence/s1s3_17A6_2026-08-29-02/` |
 | P1 (post-write readback) | **PASS on `17A6`, run #1, 2026-08-29** (host-only PASS by owner review at `237d38a`) — `docs/p1_findings.md`, `evidence/p1_17A6_2026-08-29-01/` |
-| P2 (non-perturbation) | **host-only PASS (owner review, 2026-08-29, `5c4f5f1`); board run awaits its own `whole-of-probe P2` ruling** — `docs/p2_spec.md` |
+| P2 (non-perturbation) | **PASS on `17A6`, run #3, 2026-08-29** (runs #1–#2 cut by the host's usbip link, no verdict) — `docs/p2_findings.md`, `evidence/p2_17A6_2026-08-29-03/` |
 | tests | see the command below |
 
 Nothing in this repository performs a board action without a whole-of-probe ruling.

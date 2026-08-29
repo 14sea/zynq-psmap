@@ -220,6 +220,27 @@ not the stage label, is what it enforces.
 | `evidence/p2_17A6_2026-08-29-02/ymodem.log` |
 | `evidence/p2_17A6_2026-08-29-02/ruling.json` |
 | `evidence/p2_17A6_2026-08-29-02/ruling.json.consumed` |
+| `evidence/p2_17A6_2026-08-29-03/P2_0_fclk.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_1_baseline.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_2_control.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_0.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_1.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_2.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_3.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_4.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_5.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_6.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_7.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_8.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_3_read_9.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_4_post.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_5_write.json` |
+| `evidence/p2_17A6_2026-08-29-03/P2_6_readback.json` |
+| `evidence/p2_17A6_2026-08-29-03/summary.json` |
+| `evidence/p2_17A6_2026-08-29-03/ymodem.log` |
+| `evidence/p2_17A6_2026-08-29-03/ruling.json` |
+| `evidence/p2_17A6_2026-08-29-03/ruling.json.consumed` |
+| `docs/p2_findings.md` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

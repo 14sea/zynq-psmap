@@ -1,0 +1,7 @@
+{
+  "stage": "P2_2_control",
+  "verdict": "OK",
+  "wait_s": 30.0,
+  "wait_basis": "derived",
+  "diff": []
+}

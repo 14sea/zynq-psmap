@@ -284,6 +284,13 @@ control **before** the reads (HOLD if it drifts) and one P1 write as a separable
 The counter-class form (a computing design with a heartbeat — autoehw's M1 shell) is
 named as P2b, a separate spec. Not reviewed; no ruling requested.
 
+**Dated note, 2026-08-29 (late night):** owner review of P2 host-only = PASS (`5c4f5f1`);
+§2b (md.l re-read of malformed replies only) accepted at `f3d4153`; **P2 PASS on `17A6`,
+run #3** under ruling `2026-08-29-03` (`docs/p2_findings.md`) — 14/14 observable
+comparisons equal, ten reads and one write. Runs #1–#2 were cut by the usbip console link.
+P0, P1, P2 are now all PASS within their ruled scopes. Next: P2b (counter-class
+observable) as a separate spec, and P3 as a new repository.
+
 **Dated note, 2026-08-29 (later the same day):** S0b was written (`4e2c032`) and
 cross-reviewed (`bde1d07`); the D2 third-party review was performed by an LLM (Gemini 3.1
 Pro) per the owner's ruling that the third party may be an LLM, and passed at `7a5b990`
