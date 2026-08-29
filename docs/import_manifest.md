@@ -210,6 +210,16 @@ not the stage label, is what it enforces.
 | `evidence/p2_17A6_2026-08-29-01/ymodem.log` |
 | `evidence/p2_17A6_2026-08-29-01/ruling.json` |
 | `evidence/p2_17A6_2026-08-29-01/ruling.json.consumed` |
+| `evidence/p2_17A6_2026-08-29-02/reading.md` |
+| `evidence/p2_17A6_2026-08-29-02/P2_0_fclk.json` |
+| `evidence/p2_17A6_2026-08-29-02/P2_1_baseline.json` |
+| `evidence/p2_17A6_2026-08-29-02/P2_2_control.json` |
+| `evidence/p2_17A6_2026-08-29-02/P2_3_read_0.json` |
+| `evidence/p2_17A6_2026-08-29-02/P2_3_read_1.json` |
+| `evidence/p2_17A6_2026-08-29-02/summary.json` |
+| `evidence/p2_17A6_2026-08-29-02/ymodem.log` |
+| `evidence/p2_17A6_2026-08-29-02/ruling.json` |
+| `evidence/p2_17A6_2026-08-29-02/ruling.json.consumed` |
 | `docs/line_plan_review_2026_08_29.md` |
 
 ## Deliberately NOT imported

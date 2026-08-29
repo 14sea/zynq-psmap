@@ -1,0 +1,2 @@
+2026-08-29T18:58:20 claimed pid=145761
+2026-08-29T19:02:57 REFUSED: no U-Boot prompt after 'md.l 0x10300000 0xca': b'...........\r\n10300270: a5a5a5a5 a5a5a5a5 a5a5a5a5 a5a5a5a5  ................\r\n10'
