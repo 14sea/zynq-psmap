@@ -1251,6 +1251,13 @@ class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
     # history. Retractions are allowed and are how this repository records its mistakes.
     HISTORY = ("was open", "was right then", "An earlier", "earlier version", "was wrong",
                "had been", "before review", "previously", "no longer")
+    # "awaiting review" wording was briefly treated as stale, while a PASS stood that has
+    # since been withdrawn.  §8a is technically resolved and NOT independently reviewed, so
+    # saying it awaits review is accurate again, not stale.  Only "open/unresolved" is.
+    STALE_8A_PATTERN = (
+        r"8a[^.]{0,80}(?:UNRESOLVED|is open|unresolved)|"
+        r"[Tt]wo (?:items|questions) [^.]{0,30}UNRESOLVED"
+    )
 
     def _stale(self, text: str, pattern: str) -> list[str]:
         flat = " ".join(text.replace("*", "").replace("|", " ").split())
@@ -1273,10 +1280,58 @@ class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
         for name, path in self.FILES.items():
             with self.subTest(doc=name):
                 stale = self._stale(
-                    path.read_text(),
-                    r"8a[^.]{0,60}(?:UNRESOLVED|is open|unresolved)|"
-                    r"[Tt]wo (?:items|questions) [^.]{0,30}UNRESOLVED")
+                    path.read_text(), self.STALE_8A_PATTERN)
                 self.assertEqual(stale, [], f"{name}: {stale}")
+
+    def test_awaiting_review_wording_is_not_stale_while_review_is_owed(self):
+        """The withdrawn PASS made this backwards for one commit.
+
+        While a PASS stood, "awaiting review" was treated as stale wording.  The PASS was
+        withdrawn -- cross-review between the two co-authors is not the independent review
+        §8 asks for -- so the delta genuinely awaits review and saying so is accurate.
+        """
+        for phrase in ("awaiting independent review", "independently reviewed: NO",
+                       "awaits an independent third party"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(
+                    self._stale(f"§8a is {phrase}.", self.STALE_8A_PATTERN), [],
+                    f"{phrase!r} is accurate and must not be flagged as stale")
+        self.assertTrue(self._stale("§8a is unresolved.", self.STALE_8A_PATTERN),
+                        "calling §8a unresolved must still be refused")
+
+    def test_no_document_claims_8a_was_independently_reviewed(self):
+        """The table is pinned; the prose was not, and the prose is what a reader reads.
+
+        Flipping "Independently reviewed: NO" to YES, or deleting the sentence saying no
+        party independent of both has reviewed the delta, changed no test while the
+        canonical table still said the opposite. That is a document claiming a gate state
+        it does not have, which is the one thing the frozen status guard still has to
+        refuse.
+        """
+        claim = re.compile(
+            r"[Ii]ndependently reviewed: YES|"
+            r"(?:has been|was) independently reviewed|"
+            r"passed independent review|independent review PASS")
+        for name, path in self.FILES.items():
+            flat = " ".join(path.read_text().replace("*", " ").replace("|", " ").split())
+            for m in claim.finditer(flat):
+                window = flat[max(0, m.start() - 100):m.end() + 60]
+                with self.subTest(doc=name, at=m.group(0)[:40]):
+                    self.assertRegex(
+                        window, r"withdrawn|An earlier|earlier version|was recorded|"
+                                r"\bNOT\b|\bno\b",
+                        f"{name} claims §8a was independently reviewed: ...{window}...")
+
+    def test_the_8a_section_records_why_review_is_still_owed(self):
+        seq = " ".join(
+            (REPO_ROOT / "docs/s0_derived_sequence.md").read_text()
+            .replace("*", " ").split())
+        self.assertIn("Independently reviewed: NO", seq)
+        self.assertRegex(
+            seq, r"no party independent of both has reviewed the .8a delta as a whole",
+            "the reason the gate is not satisfied must stay on the record")
+        self.assertRegex(seq, r"withdrawn",
+                         "the withdrawn PASS must stay visible as withdrawn")
 
     def test_the_planner_and_the_documents_agree_on_the_default(self):
         """Not prose: the argparse default itself."""
@@ -1323,7 +1378,7 @@ class TheRecordedStatusIsInternallyConsistent(unittest.TestCase):
 CANONICAL_STATUS_TABLE = (
     ("gate", "state"),
     ("S0a", "PASS at 8cb544b"),
-    ("§8a", "awaiting non-author review"),
+    ("§8a", "technically resolved; independently reviewed: NO"),
     ("S0b", "not started"),
     ("S0", "NOT complete"),
 )
@@ -1397,7 +1452,7 @@ CANONICAL_SOURCE_BLOCK = (
     "| gate | state |\n"
     "|---|---|\n"
     "| **S0a** | **PASS at `8cb544b`** |\n"
-    "| **§8a** | **awaiting non-author review** |\n"
+    "| **§8a** | **technically resolved; independently reviewed: NO** |\n"
     "| **S0b** | **not started** |\n"
     "| **S0** | **NOT complete** |\n"
 )
@@ -1497,7 +1552,7 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
 
     GOOD = ("| gate | state |\n|---|---|\n"
             "| **S0a** | **PASS at `8cb544b`** |\n"
-            "| **§8a** | **awaiting non-author review** |\n"
+            "| **§8a** | **technically resolved; independently reviewed: NO** |\n"
             "| **S0b** | **not started** |\n"
             "| **S0** | **NOT complete** |\n")
 
@@ -1510,8 +1565,8 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
             "S0a + awaiting non-author review": ("S0a", "; awaiting non-author review"),
             "S0a + pending non-author review": ("S0a", "; pending non-author review"),
             "S0a + delivered": ("S0a", "; delivered"),
-            "§8a + reviewed": ("§8a", "; reviewed"),
-            "§8a + review passed": ("§8a", "; review passed"),
+            "§8a + PASS": ("§8a", "; PASS at 77e29a5"),
+            "§8a + independently reviewed": ("§8a", "; independently reviewed: YES"),
             "§8a + signed off": ("§8a", "; signed off"),
             "S0b + active": ("S0b", "; active"),
             "S0b + implementation complete": ("S0b", "; implementation complete"),
@@ -1534,8 +1589,8 @@ class TheGateStatusIsPinnedAcrossEveryDocument(unittest.TestCase):
         bad = (self.GOOD
                .replace("| **S0a** | **PASS at `8cb544b`** |",
                         "| **S0a** | **PASS at `8cb544b`**; pending non-author review |")
-               .replace("| **§8a** | **awaiting non-author review** |",
-                        "| **§8a** | **awaiting non-author review**; reviewed |")
+               .replace("| **§8a** | **technically resolved; independently reviewed: NO** |",
+                        "| **§8a** | **technically resolved; independently reviewed: NO**; PASS at 77e29a5 |")
                .replace("| **S0b** | **not started** |",
                         "| **S0b** | **not started**; active |"))
         problems = status_problems(bad)

@@ -416,9 +416,15 @@ link. Recorded as **derived, not measured** until an S1 record carries a real el
 
 ### 8a. Whether a readback is one bidirectional DMA command or two — **RESOLVED: two**
 
-**Resolved 2026-08-28, host-only, pending review.** The documents do **not** settle it; what
-settles it is stated below, and the losing reading is kept as a named alternative rather
-than deleted.
+**Resolved 2026-08-28, host-only. Independently reviewed: NO.** Every commit from
+`d0ba146` to `77e29a5` was reviewed by the other of the two co-authors, and each round
+found real defects in the other's work. That is cross-review, not the review this
+specification asks for: §8 requires "the party that did not write it", and **no party
+independent of both has reviewed the §8a delta as a whole**, because both wrote parts of
+it. A PASS recorded on 2026-08-29 was withdrawn for exactly that reason.
+
+The documents do **not** settle the question; what settles it is stated below, and the
+losing reading is kept as a named alternative rather than deleted.
 
 #### The evidence, exhausted
 
@@ -570,7 +576,7 @@ honestly:
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
-| **§8a** | **awaiting non-author review** |
+| **§8a** | **technically resolved; independently reviewed: NO** |
 | **S0b** | **not started** |
 | **S0** | **NOT complete** |
 
@@ -584,5 +590,7 @@ honestly:
 
 **§8a was that precondition and it is now resolved** — the sequence is pinned rather than
 left to the operator, and the losing reading is retained only as a named alternative for a
-new run. The resolution is itself **unreviewed**. What remains between here and S0 is
-**S0b**.
+new run. The resolution is **technically settled but not independently reviewed**: every
+commit was cross-reviewed by the other co-author, and neither co-author can supply the
+independent review §8 requires. What remains between here and S0 is **S0b**, and an
+independent review of §8a.

@@ -91,7 +91,7 @@ line:
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
-| **§8a** | **awaiting non-author review** |
+| **§8a** | **technically resolved; independently reviewed: NO** |
 | **S0b** | **not started** |
 | **S0** | **NOT complete** |
 
@@ -111,7 +111,10 @@ board ruling may be sought against S0a alone. **§8a is now resolved** and the s
 pinned, so what remains between S0a and S0 is **S0b**.
 
 **§8a was resolved host-only on 2026-08-28 — two unidirectional DMA commands, with the
-non-active endpoint's length 0 — and that resolution has not yet been reviewed.** It is
+non-active endpoint's length 0. Independently reviewed: NO.** Every commit of that delta
+was reviewed by the other co-author, but §8's gate asks for a party that did not write the
+thing under test, and both co-authors wrote parts of it; a PASS recorded on 2026-08-29 was
+withdrawn on that ground. It is
 pinned in the planner rather than left to the operator, and the losing reading is retained
 as a named alternative a new run may adopt after any stop. **No observation is claimed to
 reveal a wrong pin**: `DMA_CMD_ERR` and `P2D_LEN_ERR` are recorded as candidate diagnoses

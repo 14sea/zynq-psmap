@@ -5,12 +5,12 @@ A host-only question, asked separately from the repository it came out of:
 > **does a PS/PCAP-side configuration read return the frame that was requested, on this
 > die?**
 
-## Status — S0a passed at `8cb544b`; §8a delta awaiting review
+## Status — S0a passed at `8cb544b`; §8a technically resolved, not independently reviewed
 
 | gate | state |
 |---|---|
 | **S0a** | **PASS at `8cb544b`** |
-| **§8a** | **awaiting non-author review** |
+| **§8a** | **technically resolved; independently reviewed: NO** |
 | **S0b** | **not started** |
 | **S0** | **NOT complete** |
 
