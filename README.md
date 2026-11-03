@@ -93,6 +93,13 @@ is Claim B's actual claim. If the PS line fails, only navigation waits.
 | [`docs/pcap_probe_spec.md`](docs/pcap_probe_spec.md) | **the maintained specification.** Self-contained, owned here, carries the migration note and resolves every reference the snapshot cannot. |
 | [`docs/pcap_readback_probe_spec.md`](docs/pcap_readback_probe_spec.md) | **archival imported snapshot**, byte-identical to the source and hash-checked. Read through the migration note; its "this repository" means `zynq-fabricmap` at `5ad36a1`. |
 
+## Prior art
+
+PCAP readback is a vendor feature (UG585, `XDcfg_PcapReadback()`), and readback CRC / the
+SEM IP already use readback to check configuration integrity. This repo adds the evidence
+practice — preregistered, bit-exact "is this the frame I asked for" and non-perturbation
+gates on one die — not a mechanism. See [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) (2026-11-03).
+
 ## Provenance
 
 Every non-original file was copied byte-for-byte from `zynq-fabricmap` at commit
