@@ -242,6 +242,7 @@ not the stage label, is what it enforces.
 | `evidence/p2_17A6_2026-08-29-03/ruling.json.consumed` |
 | `docs/p2_findings.md` |
 | `docs/line_plan_review_2026_08_29.md` |
+| `docs/PRIOR_ART.md` |
 
 ## Deliberately NOT imported
 
